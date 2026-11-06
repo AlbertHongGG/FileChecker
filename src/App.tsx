@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import TitleBar from "./TitleBar";
-import HomeView from "./components/HomeView";
-import CompareWorkspace from "./components/CompareWorkspace";
-import { NotificationContainer } from "./components/Notification";
+import TitleBar from "./components/layout/TitleBar";
+import { HomeView } from "./features/home";
+import { CompareWorkspace } from "./features/compare";
+import { NotificationContainer } from "./components/common/Notification";
 import "./App.css";
 
 export type ViewState = 'home' | 'compare';

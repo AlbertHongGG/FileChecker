@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Columns2, Rows2, FileCode } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
-import { Tooltip } from './Tooltip';
+import { Tooltip } from '../../../components/common/Tooltip';
 
 interface DiffDrawerProps {
   relativePath: string;
@@ -66,23 +66,34 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       }}
     >
       {/* Header */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 16px',
-        borderBottom: '1px solid var(--border-subtle)',
-        background: 'var(--bg-surface)',
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 16px',
+          borderBottom: '1px solid var(--border-subtle)',
+          background: 'var(--bg-surface)',
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
           <FileCode size={16} style={{ color: 'var(--status-info)', flexShrink: 0 }} />
-          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span
+            style={{
+              fontSize: '13px',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {relativePath}
           </span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-          <Tooltip content={splitView ? "Inline View" : "Split View"} position="bottom">
+          <Tooltip content={splitView ? 'Inline View' : 'Split View'} position="bottom">
             <button className="icon-btn" onClick={() => setSplitView(!splitView)}>
               {splitView ? <Rows2 size={15} /> : <Columns2 size={15} />}
             </button>

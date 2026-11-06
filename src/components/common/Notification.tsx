@@ -1,7 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
-import { useNotification, NotificationMsg } from '../contexts/NotificationContext';
+import { useNotification, NotificationMsg } from '../../contexts/NotificationContext';
 
 const AnimatedIcon = ({ type }: { type: NotificationMsg['type'] }) => {
   const draw = {

@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDiffViewer from 'react-diff-viewer-continued';
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from '../../../contexts/ThemeContext';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-javascript';
 import 'prismjs/components/prism-typescript';
@@ -31,7 +31,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   splitView = true,
   leftTitle,
   rightTitle,
-  language = 'typescript'
+  language = 'typescript',
 }) => {
   const { theme } = useTheme();
 
@@ -52,7 +52,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   };
 
   return (
-    <div className="diff-viewer-container" style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border-default)' }}>
+    <div
+      className="diff-viewer-container"
+      style={{
+        borderRadius: 'var(--radius-md)',
+        overflow: 'hidden',
+        border: '1px solid var(--border-default)',
+      }}
+    >
       <ReactDiffViewer
         oldValue={oldValue}
         newValue={newValue}
@@ -114,7 +121,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               diffViewerTitleBackground: 'var(--bg-surface)',
               diffViewerTitleColor: 'var(--text-primary)',
               diffViewerTitleBorderColor: 'var(--border-subtle)',
-            }
+            },
           },
           line: {
             padding: '3px 8px',
@@ -135,7 +142,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           titleBlock: {
             padding: '10px 14px',
             fontSize: '12px',
-          }
+          },
         }}
       />
     </div>

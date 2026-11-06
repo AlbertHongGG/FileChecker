@@ -1,7 +1,7 @@
 import { Window } from "@tauri-apps/api/window";
 import { Minus, Square, X, Sun, Moon } from "lucide-react";
-import { useTheme } from "./contexts/ThemeContext";
-import { Tooltip } from "./components/Tooltip";
+import { useTheme } from "../../contexts/ThemeContext";
+import { Tooltip } from "../common/Tooltip";
 
 export default function TitleBar() {
   const { theme, toggleTheme } = useTheme();

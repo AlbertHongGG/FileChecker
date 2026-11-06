@@ -1,4 +1,4 @@
-import { UnifiedEntry, TreeNode, PlannedAction } from '../types/compare';
+import { UnifiedEntry, TreeNode, PlannedAction, FlattenedRow } from '../../../types';
 
 export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
   const rootMap = new Map<string, TreeNode>();
@@ -64,13 +64,16 @@ export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
 
   roots.forEach(propagateDiffs);
 
-  // Sort: directories first, then alphabetical
+  // Sort: directories first, then natural alphabetical
   function sortNodes(nodes: TreeNode[]) {
     nodes.sort((a, b) => {
       if (a.is_dir !== b.is_dir) {
         return a.is_dir ? -1 : 1;
       }
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      return a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
     });
     for (const node of nodes) {
       if (node.children) {
@@ -83,35 +86,6 @@ export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
   return roots;
 }
 
-export function formatFileSize(bytes?: number | null): string {
-  if (bytes === undefined || bytes === null) return '-';
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-export function formatTimestamp(ts?: number | null): string {
-  if (!ts) return '-';
-  const date = new Date(ts);
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-}
-
-export interface FlattenedRow {
-  node: TreeNode;
-  depth: number;
-  hasChildren: boolean;
-  isExpanded: boolean;
-}
-
 export function flattenTree(
   nodes: TreeNode[],
   expandedPaths: Set<string>,
@@ -122,7 +96,11 @@ export function flattenTree(
   const result: FlattenedRow[] = [];
 
   for (const node of nodes) {
-    const hasDiff = node.diff_kind.type !== 'Identical' || (actionMap.get(node.relative_path) && actionMap.get(node.relative_path) !== 'skip');
+    const hasDiff =
+      node.diff_kind.type !== 'Identical' ||
+      (actionMap.get(node.relative_path) &&
+        actionMap.get(node.relative_path) !== 'skip');
+
     if (onlyDiffs && !hasDiff && !node.is_dir) {
       continue;
     }
@@ -138,7 +116,15 @@ export function flattenTree(
     });
 
     if (hasChildren && isExpanded && node.children) {
-      result.push(...flattenTree(node.children, expandedPaths, onlyDiffs, actionMap, depth + 1));
+      result.push(
+        ...flattenTree(
+          node.children,
+          expandedPaths,
+          onlyDiffs,
+          actionMap,
+          depth + 1
+        )
+      );
     }
   }
 
