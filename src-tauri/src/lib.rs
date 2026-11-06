@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use tauri::{Emitter, State, Window};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,13 +41,15 @@ pub struct UnifiedEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncTask {
     pub relative_path: String,
-    pub action: String, // "copy_a_to_b" | "copy_b_to_a" | "delete_a" | "delete_b"
+    pub action: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanProgressPayload {
-    pub count: usize,
-    pub current_path: String,
+    pub count_a: usize,
+    pub count_b: usize,
+    pub is_hdd_a: bool,
+    pub is_hdd_b: bool,
     pub phase: String,
 }
 
@@ -114,23 +116,235 @@ fn get_prune_set() -> HashSet<&'static str> {
     set
 }
 
-fn scan_directory_tree(
+// Hardware-Adaptive Storage Inspector: Detects if path is on a mechanical HDD / USB drive
+#[cfg(target_os = "windows")]
+fn is_slow_or_hdd(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    let path_str = path.to_string_lossy();
+    let drive_letter = if path_str.len() >= 2 && path_str.as_bytes()[1] == b':' {
+        path_str.chars().next().unwrap()
+    } else {
+        return false;
+    };
+
+    let drive_prefix = format!("{}:\\", drive_letter);
+    let wide_root: Vec<u16> = std::ffi::OsStr::new(&drive_prefix)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    extern "system" {
+        fn GetDriveTypeW(lpRootPathName: *const u16) -> u32;
+    }
+
+    let drive_type = unsafe { GetDriveTypeW(wide_root.as_ptr()) };
+    if drive_type == 2 {
+        // DRIVE_REMOVABLE (USB flash drive / card)
+        return true;
+    }
+
+    // Check Seek Penalty via IOCTL_STORAGE_QUERY_PROPERTY
+    let dev_path = format!("\\\\.\\{}:", drive_letter);
+    let wide_dev: Vec<u16> = std::ffi::OsStr::new(&dev_path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    extern "system" {
+        fn CreateFileW(
+            lpFileName: *const u16,
+            dwDesiredAccess: u32,
+            dwShareMode: u32,
+            lpSecurityAttributes: *const std::ffi::c_void,
+            dwCreationDisposition: u32,
+            dwFlagsAndAttributes: u32,
+            hTemplateFile: isize,
+        ) -> isize;
+        fn DeviceIoControl(
+            hDevice: isize,
+            dwIoControlCode: u32,
+            lpInBuffer: *const std::ffi::c_void,
+            nInBufferSize: u32,
+            lpOutBuffer: *mut std::ffi::c_void,
+            nOutBufferSize: u32,
+            lpBytesReturned: *mut u32,
+            lpOverlapped: *mut std::ffi::c_void,
+        ) -> i32;
+        fn CloseHandle(hObject: isize) -> i32;
+    }
+
+    const FILE_SHARE_READ: u32 = 0x00000001;
+    const FILE_SHARE_WRITE: u32 = 0x00000002;
+    const OPEN_EXISTING: u32 = 3;
+    const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D1400;
+
+    unsafe {
+        let handle = CreateFileW(
+            wide_dev.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            0,
+        );
+
+        if handle == -1 || handle == 0 {
+            // Fallback: If not C:, consider external/secondary
+            return drive_letter.to_ascii_uppercase() != 'C';
+        }
+
+        #[repr(C)]
+        struct StoragePropertyQuery {
+            property_id: u32,
+            query_type: u32,
+            additional_parameters: [u8; 1],
+        }
+
+        #[repr(C)]
+        struct DeviceSeekPenaltyDescriptor {
+            version: u32,
+            size: u32,
+            incurs_seek_penalty: u8,
+        }
+
+        let query = StoragePropertyQuery {
+            property_id: 7, // StorageDeviceSeekPenaltyProperty
+            query_type: 0,
+            additional_parameters: [0],
+        };
+
+        let mut desc = DeviceSeekPenaltyDescriptor {
+            version: 0,
+            size: 0,
+            incurs_seek_penalty: 0,
+        };
+        let mut bytes_returned = 0u32;
+
+        let ok = DeviceIoControl(
+            handle,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            &query as *const _ as *const _,
+            std::mem::size_of::<StoragePropertyQuery>() as u32,
+            &mut desc as *mut _ as *mut _,
+            std::mem::size_of::<DeviceSeekPenaltyDescriptor>() as u32,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+        );
+
+        CloseHandle(handle);
+
+        if ok != 0 {
+            return desc.incurs_seek_penalty != 0;
+        }
+
+        drive_letter.to_ascii_uppercase() != 'C'
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_slow_or_hdd(_path: &Path) -> bool {
+    false
+}
+
+// Sequential Zero-Overhead Scanner for Mechanical HDD / USB
+// Uses single-threaded depth-first recursion with WIN32_FIND_DATAW zero-cost metadata
+fn scan_hdd_sequential(
+    current_dir: &Path,
     base_path: &Path,
-    prune_ignored: bool,
+    prune_set: &Option<HashSet<&'static str>>,
     cancel_token: &Arc<AtomicBool>,
-    window: &Window,
-    phase: &str,
+    counter: &Arc<AtomicUsize>,
+    map: &mut HashMap<String, FileMetadata>,
+) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Scan cancelled by user".to_string());
+    }
+
+    let entries = match fs::read_dir(current_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    for entry_res in entries {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Scan cancelled by user".to_string());
+        }
+
+        let entry = match entry_res {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+
+        let is_dir = file_type.is_dir();
+
+        // Pruning at directory boundary
+        if is_dir {
+            if let Some(ref set) = prune_set {
+                if set.contains(name_str.as_ref()) {
+                    continue; // Skip subtree completely!
+                }
+            }
+        }
+
+        let path = entry.path();
+        if let Ok(rel) = path.strip_prefix(base_path) {
+            let rel_str = normalize_relative_path(rel);
+            if !rel_str.is_empty() {
+                // In std::fs on Windows, entry.metadata() directly uses the cached WIN32_FIND_DATAW (0 extra syscalls!)
+                let meta = entry.metadata().ok();
+                let size = if is_dir {
+                    0
+                } else {
+                    meta.as_ref().map(|m| m.len()).unwrap_or(0)
+                };
+                let modified_timestamp = meta
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+
+                map.insert(
+                    rel_str,
+                    FileMetadata {
+                        size,
+                        modified_timestamp,
+                        is_dir,
+                    },
+                );
+
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        if is_dir {
+            scan_hdd_sequential(&path, base_path, prune_set, cancel_token, counter, map)?;
+        }
+    }
+
+    Ok(())
+}
+
+// Parallel Work-Stealing Scanner for Internal High-IOPS SSDs
+fn scan_ssd_parallel(
+    base_path: &Path,
+    prune_set: Option<HashSet<&'static str>>,
+    cancel_token: &Arc<AtomicBool>,
+    counter: &Arc<AtomicUsize>,
 ) -> Result<HashMap<String, FileMetadata>, String> {
     let mut map = HashMap::new();
     if !base_path.exists() || !base_path.is_dir() {
         return Ok(map);
     }
-
-    let prune_set = if prune_ignored {
-        Some(get_prune_set())
-    } else {
-        None
-    };
 
     let walker = WalkDir::new(base_path)
         .skip_hidden(false)
@@ -147,9 +361,6 @@ fn scan_directory_tree(
                 });
             }
         });
-
-    let mut last_emit = Instant::now();
-    let mut count = 0;
 
     for entry_res in walker {
         if cancel_token.load(Ordering::Relaxed) {
@@ -180,7 +391,7 @@ fn scan_directory_tree(
                         .unwrap_or(0);
 
                     map.insert(
-                        rel_str.clone(),
+                        rel_str,
                         FileMetadata {
                             size,
                             modified_timestamp,
@@ -188,24 +399,43 @@ fn scan_directory_tree(
                         },
                     );
 
-                    count += 1;
-                    if count % 100 == 0 && last_emit.elapsed().as_millis() > 60 {
-                        let _ = window.emit(
-                            "scan-progress",
-                            ScanProgressPayload {
-                                count,
-                                current_path: rel_str,
-                                phase: phase.to_string(),
-                            },
-                        );
-                        last_emit = Instant::now();
-                    }
+                    counter.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     }
 
     Ok(map)
+}
+
+// Adaptive Dispatcher: Selects SSD parallel vs HDD sequential based on hardware characteristics
+fn scan_directory_adaptive(
+    base_path: &Path,
+    is_hdd: bool,
+    prune_ignored: bool,
+    cancel_token: &Arc<AtomicBool>,
+    counter: &Arc<AtomicUsize>,
+) -> Result<HashMap<String, FileMetadata>, String> {
+    let prune_set = if prune_ignored {
+        Some(get_prune_set())
+    } else {
+        None
+    };
+
+    if is_hdd {
+        let mut map = HashMap::new();
+        scan_hdd_sequential(
+            base_path,
+            base_path,
+            &prune_set,
+            cancel_token,
+            counter,
+            &mut map,
+        )?;
+        Ok(map)
+    } else {
+        scan_ssd_parallel(base_path, prune_set, cancel_token, counter)
+    }
 }
 
 #[tauri::command]
@@ -230,12 +460,56 @@ async fn compare_directories(
             return Err(format!("Directory B does not exist: {}", dir_b));
         }
 
-        let map_a = scan_directory_tree(&path_a, prune_ignored, &cancel_token, &win, "Directory A")?;
-        let map_b = scan_directory_tree(&path_b, prune_ignored, &cancel_token, &win, "Directory B")?;
+        // Detect Hardware Characteristics
+        let is_hdd_a = is_slow_or_hdd(&path_a);
+        let is_hdd_b = is_slow_or_hdd(&path_b);
 
-        if cancel_token.load(Ordering::Relaxed) {
-            return Err("Scan cancelled by user".to_string());
-        }
+        let counter_a = Arc::new(AtomicUsize::new(0));
+        let counter_b = Arc::new(AtomicUsize::new(0));
+
+        // Background progress ticker thread
+        let win_ticker = win.clone();
+        let cancel_ticker = cancel_token.clone();
+        let c_a = counter_a.clone();
+        let c_b = counter_b.clone();
+
+        let ticker_handle = std::thread::spawn(move || {
+            while !cancel_ticker.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                let count_a = c_a.load(Ordering::Relaxed);
+                let count_b = c_b.load(Ordering::Relaxed);
+                let _ = win_ticker.emit(
+                    "scan-progress",
+                    ScanProgressPayload {
+                        count_a,
+                        count_b,
+                        is_hdd_a,
+                        is_hdd_b,
+                        phase: "Scanning".to_string(),
+                    },
+                );
+            }
+        });
+
+        // DUAL CONCURRENCY: Run Directory A and Directory B simultaneously!
+        let token_a = cancel_token.clone();
+        let token_b = cancel_token.clone();
+        let p_a = path_a.clone();
+        let p_b = path_b.clone();
+        let cnt_a = counter_a.clone();
+        let cnt_b = counter_b.clone();
+
+        let (res_a, res_b) = rayon::join(
+            move || scan_directory_adaptive(&p_a, is_hdd_a, prune_ignored, &token_a, &cnt_a),
+            move || scan_directory_adaptive(&p_b, is_hdd_b, prune_ignored, &token_b, &cnt_b),
+        );
+
+        // Stop progress ticker
+        cancel_token.store(true, Ordering::Relaxed);
+        let _ = ticker_handle.join();
+
+        let map_a = res_a?;
+        let map_b = res_b?;
 
         let mut all_rel_paths: BTreeSet<String> = BTreeSet::new();
         for k in map_a.keys() {
@@ -248,10 +522,6 @@ async fn compare_directories(
         let mut entries = Vec::with_capacity(all_rel_paths.len());
 
         for rel in all_rel_paths {
-            if cancel_token.load(Ordering::Relaxed) {
-                return Err("Scan cancelled by user".to_string());
-            }
-
             let meta_a = map_a.get(&rel).cloned();
             let meta_b = map_b.get(&rel).cloned();
 
@@ -427,7 +697,7 @@ fn reveal_in_explorer(full_path: String) {
         use std::os::windows::process::CommandExt;
         use std::process::Command;
         let mut cmd = Command::new("explorer");
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(0x08000000);
         cmd.args(["/select,", &full_path]);
         let _ = cmd.spawn();
     }

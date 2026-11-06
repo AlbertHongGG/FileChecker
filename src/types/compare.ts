@@ -30,8 +30,10 @@ export interface SyncTask {
 }
 
 export interface ScanProgressPayload {
-  count: number;
-  current_path: string;
+  count_a: number;
+  count_b: number;
+  is_hdd_a: boolean;
+  is_hdd_b: boolean;
   phase: string;
 }
 

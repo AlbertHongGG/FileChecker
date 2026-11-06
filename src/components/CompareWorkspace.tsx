@@ -160,7 +160,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   const runCompare = useCallback(async () => {
     if (!dirA || !dirB) return;
     setIsLoading(true);
-    setScanProgress({ count: 0, current_path: '', phase: 'Initializing' });
+    setScanProgress({ count_a: 0, count_b: 0, is_hdd_a: false, is_hdd_b: false, phase: 'Initializing' });
 
     try {
       const result: UnifiedEntry[] = await invoke('compare_directories', {
@@ -430,12 +430,12 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
             </Tooltip>
           )}
 
-          {/* Live scanning progress indicator */}
+          {/* Live dual-side scanning progress indicator */}
           {isLoading && scanProgress && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
               <Loader2 size={13} className="animate-spin" style={{ color: 'var(--status-info)' }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                {scanProgress.count.toLocaleString()} files ({scanProgress.phase})
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                A: {scanProgress.count_a.toLocaleString()} {scanProgress.is_hdd_a ? '(HDD)' : '(SSD)'} &nbsp;|&nbsp; B: {scanProgress.count_b.toLocaleString()} {scanProgress.is_hdd_b ? '(HDD)' : '(SSD)'}
               </span>
             </div>
           )}
@@ -598,7 +598,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
                   <Loader2 size={24} className="animate-spin" style={{ color: 'var(--status-info)' }} />
                   {scanProgress && (
                     <span style={{ fontSize: '12px' }}>
-                      {scanProgress.count.toLocaleString()} files scanned ({scanProgress.phase})
+                      A: {scanProgress.count_a.toLocaleString()} {scanProgress.is_hdd_a ? '(HDD)' : '(SSD)'} &nbsp;|&nbsp; B: {scanProgress.count_b.toLocaleString()} {scanProgress.is_hdd_b ? '(HDD)' : '(SSD)'}
                     </span>
                   )}
                 </div>
