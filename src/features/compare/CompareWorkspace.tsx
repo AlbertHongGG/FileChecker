@@ -184,6 +184,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               onToggleExpand={toggleExpand}
               onSetAction={setAction}
               onOpenDiff={openDiff}
+              onCancelScan={cancelScan}
             />
           </div>
         )}

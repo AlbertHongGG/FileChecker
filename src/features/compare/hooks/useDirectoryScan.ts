@@ -66,9 +66,15 @@ export function useDirectoryScan() {
     if (!dirA || !dirB) return;
     setIsLoading(true);
     setScanProgress({
+      completed_a: 0,
+      total_a: 0,
+      current_name_a: '',
       count_a: 0,
-      count_b: 0,
       is_hdd_a: false,
+      completed_b: 0,
+      total_b: 0,
+      current_name_b: '',
+      count_b: 0,
       is_hdd_b: false,
       phase: 'Initializing',
     });

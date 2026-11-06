@@ -1,5 +1,5 @@
-import React from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Loader2, X } from 'lucide-react';
 import { FlattenedRow, PlannedAction, ScanProgressPayload } from '../../../../types';
 import { DualTreeRow } from './DualTreeRow';
 
@@ -17,6 +17,7 @@ interface DualTreeVirtualListProps {
   onToggleExpand: (path: string) => void;
   onSetAction: (path: string, act: PlannedAction) => void;
   onOpenDiff: (path: string) => void;
+  onCancelScan?: () => void;
 }
 
 export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
@@ -33,7 +34,18 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
   onToggleExpand,
   onSetAction,
   onOpenDiff,
+  onCancelScan,
 }) => {
+  const percentA = useMemo(() => {
+    if (!scanProgress || scanProgress.total_a === 0) return 0;
+    return Math.min(100, Math.round((scanProgress.completed_a / scanProgress.total_a) * 100));
+  }, [scanProgress]);
+
+  const percentB = useMemo(() => {
+    if (!scanProgress || scanProgress.total_b === 0) return 0;
+    return Math.min(100, Math.round((scanProgress.completed_b / scanProgress.total_b) * 100));
+  }, [scanProgress]);
+
   return (
     <div
       ref={scrollContainerRef}
@@ -53,17 +65,151 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
             alignItems: 'center',
             justifyContent: 'center',
             height: '100%',
-            gap: '10px',
+            gap: '16px',
             color: 'var(--text-secondary)',
+            padding: '24px',
           }}
         >
-          <Loader2 size={24} className="animate-spin" style={{ color: 'var(--status-info)' }} />
-          {scanProgress && (
-            <span style={{ fontSize: '12px' }}>
-              A: {scanProgress.count_a.toLocaleString()} {scanProgress.is_hdd_a ? '(HDD)' : '(SSD)'} &nbsp;|&nbsp; B:{' '}
-              {scanProgress.count_b.toLocaleString()} {scanProgress.is_hdd_b ? '(HDD)' : '(SSD)'}
-            </span>
-          )}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              width: '100%',
+              maxWidth: '440px',
+              padding: '20px 24px',
+              borderRadius: '12px',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              gap: '16px',
+            }}
+          >
+            {/* Header with spinner and cancel */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Loader2 size={16} className="animate-spin" style={{ color: 'var(--status-info)' }} />
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Scanning Directories...
+                </span>
+              </div>
+              {onCancelScan && (
+                <button
+                  className="icon-btn"
+                  onClick={onCancelScan}
+                  title="Cancel Scan"
+                  style={{ color: 'var(--status-danger)' }}
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+
+            {/* Side A Anchor Progress */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Directory A ({scanProgress?.is_hdd_a ? 'HDD' : 'SSD'})
+                </span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--status-info)' }}>
+                  {percentA}%
+                </span>
+              </div>
+              <div
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: 'var(--bg-surface-hover)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${percentA}%`,
+                    height: '100%',
+                    background: 'var(--status-info)',
+                    borderRadius: '3px',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '11px',
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                <span
+                  style={{
+                    maxWidth: '240px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {scanProgress?.current_name_a || 'Starting...'}
+                </span>
+                <span style={{ fontFamily: 'monospace' }}>
+                  {scanProgress?.completed_a}/{scanProgress?.total_a} ({scanProgress?.count_a.toLocaleString()} files)
+                </span>
+              </div>
+            </div>
+
+            {/* Side B Anchor Progress */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Directory B ({scanProgress?.is_hdd_b ? 'HDD' : 'SSD'})
+                </span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--status-info)' }}>
+                  {percentB}%
+                </span>
+              </div>
+              <div
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: 'var(--bg-surface-hover)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${percentB}%`,
+                    height: '100%',
+                    background: 'var(--status-info)',
+                    borderRadius: '3px',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '11px',
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                <span
+                  style={{
+                    maxWidth: '240px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {scanProgress?.current_name_b || 'Starting...'}
+                </span>
+                <span style={{ fontFamily: 'monospace' }}>
+                  {scanProgress?.completed_b}/{scanProgress?.total_b} ({scanProgress?.count_b.toLocaleString()} files)
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       ) : rowsCount === 0 ? (
         <div

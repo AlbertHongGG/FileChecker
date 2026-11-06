@@ -86,14 +86,82 @@ export const CompareToolbar: React.FC<CompareToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Live dual-side scanning indicator */}
+        {/* Live dual-side Anchor scanning indicator */}
         {isLoading && scanProgress && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
             <Loader2 size={13} className="animate-spin" style={{ color: 'var(--status-info)' }} />
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-              A: {scanProgress.count_a.toLocaleString()} {scanProgress.is_hdd_a ? '(HDD)' : '(SSD)'} &nbsp;|&nbsp; B:{' '}
-              {scanProgress.count_b.toLocaleString()} {scanProgress.is_hdd_b ? '(HDD)' : '(SSD)'}
-            </span>
+            
+            {/* Anchor A Badge */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '11px',
+                padding: '2px 7px',
+                borderRadius: '4px',
+                background: 'var(--bg-surface-hover)',
+                color: 'var(--text-secondary)',
+                fontFamily: 'monospace',
+              }}
+            >
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>A:</span>
+              <span>{scanProgress.completed_a}/{scanProgress.total_a}</span>
+              {scanProgress.current_name_a && (
+                <span
+                  style={{
+                    maxWidth: '90px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: 'var(--status-info)',
+                  }}
+                  title={scanProgress.current_name_a}
+                >
+                  [{scanProgress.current_name_a}]
+                </span>
+              )}
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '10px' }}>
+                ({scanProgress.count_a.toLocaleString()} • {scanProgress.is_hdd_a ? 'HDD' : 'SSD'})
+              </span>
+            </div>
+
+            <span style={{ color: 'var(--border-strong)', fontSize: '11px' }}>|</span>
+
+            {/* Anchor B Badge */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '11px',
+                padding: '2px 7px',
+                borderRadius: '4px',
+                background: 'var(--bg-surface-hover)',
+                color: 'var(--text-secondary)',
+                fontFamily: 'monospace',
+              }}
+            >
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>B:</span>
+              <span>{scanProgress.completed_b}/{scanProgress.total_b}</span>
+              {scanProgress.current_name_b && (
+                <span
+                  style={{
+                    maxWidth: '90px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: 'var(--status-info)',
+                  }}
+                  title={scanProgress.current_name_b}
+                >
+                  [{scanProgress.current_name_b}]
+                </span>
+              )}
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '10px' }}>
+                ({scanProgress.count_b.toLocaleString()} • {scanProgress.is_hdd_b ? 'HDD' : 'SSD'})
+              </span>
+            </div>
           </div>
         )}
 
