@@ -29,6 +29,12 @@ export interface SyncTask {
   action: PlannedAction;
 }
 
+export interface ScanProgressPayload {
+  count: number;
+  current_path: string;
+  phase: string;
+}
+
 export interface SyncProgressPayload {
   current: number;
   total: number;

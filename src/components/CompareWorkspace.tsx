@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
@@ -25,6 +25,9 @@ import {
   FileText,
   Play,
   Loader2,
+  Shield,
+  ShieldAlert,
+  X,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useNotification } from '../contexts/NotificationContext';
@@ -33,6 +36,7 @@ import {
   UnifiedEntry,
   PlannedAction,
   SyncTask,
+  ScanProgressPayload,
   SyncProgressPayload,
 } from '../types/compare';
 import {
@@ -43,6 +47,9 @@ import {
   FlattenedRow,
 } from '../utils/treeUtils';
 
+const ROW_HEIGHT = 28;
+const BUFFER_SIZE = 12;
+
 interface CompareWorkspaceProps {
   onBack: () => void;
 }
@@ -52,11 +59,19 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   const [dirB, setDirB] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [scanProgress, setScanProgress] = useState<ScanProgressPayload | null>(null);
+  const [pruneIgnored, setPruneIgnored] = useState(true);
+
   const [entries, setEntries] = useState<UnifiedEntry[]>([]);
   const [actionMap, setActionMap] = useState<Map<string, PlannedAction>>(new Map());
 
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [onlyDiffs, setOnlyDiffs] = useState(true);
+
+  // Virtual scrolling state
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(600);
 
   // Diff drawer
   const [diffTarget, setDiffTarget] = useState<{
@@ -71,18 +86,39 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
 
   const { addNotification } = useNotification();
 
-  // Listen to sync-progress events
+  // Listen to scan-progress and sync-progress
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenScan: (() => void) | undefined;
+    let unlistenSync: (() => void) | undefined;
+
+    listen<ScanProgressPayload>('scan-progress', (event) => {
+      setScanProgress(event.payload);
+    }).then((fn) => {
+      unlistenScan = fn;
+    });
+
     listen<SyncProgressPayload>('sync-progress', (event) => {
       setSyncProgress(event.payload);
     }).then((fn) => {
-      unlisten = fn;
+      unlistenSync = fn;
     });
 
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenScan) unlistenScan();
+      if (unlistenSync) unlistenSync();
     };
+  }, []);
+
+  // Update viewport height on resize
+  useEffect(() => {
+    const updateHeight = () => {
+      if (scrollContainerRef.current) {
+        setViewportHeight(scrollContainerRef.current.clientHeight);
+      }
+    };
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
   }, []);
 
   // Pick directory A
@@ -90,6 +126,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
+        await invoke('cancel_comparison');
         setDirA(selected);
       }
     } catch (e) {
@@ -103,6 +140,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
+        await invoke('cancel_comparison');
         setDirB(selected);
       }
     } catch (e) {
@@ -111,14 +149,24 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     }
   };
 
+  // Cancel in-flight scan
+  const handleCancelScan = async () => {
+    await invoke('cancel_comparison');
+    setIsLoading(false);
+    setScanProgress(null);
+  };
+
   // Trigger compare
   const runCompare = useCallback(async () => {
     if (!dirA || !dirB) return;
     setIsLoading(true);
+    setScanProgress({ count: 0, current_path: '', phase: 'Initializing' });
+
     try {
       const result: UnifiedEntry[] = await invoke('compare_directories', {
         dirA,
         dirB,
+        pruneIgnored,
       });
       setEntries(result);
       setActionMap(new Map());
@@ -137,12 +185,16 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
       }
       setExpandedPaths(autoExpand);
     } catch (err) {
-      console.error(err);
-      addNotification('error', 'Comparison Failed', String(err));
+      const msg = String(err);
+      if (!msg.includes('cancelled')) {
+        console.error(err);
+        addNotification('error', 'Comparison Failed', msg);
+      }
     } finally {
       setIsLoading(false);
+      setScanProgress(null);
     }
-  }, [dirA, dirB, addNotification]);
+  }, [dirA, dirB, pruneIgnored, addNotification]);
 
   useEffect(() => {
     if (dirA && dirB) {
@@ -156,6 +208,26 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     () => flattenTree(tree, expandedPaths, onlyDiffs, actionMap),
     [tree, expandedPaths, onlyDiffs, actionMap]
   );
+
+  // Virtual scrolling slice
+  const { visibleRows, startIndex, totalHeight, paddingTop } = useMemo(() => {
+    const count = rows.length;
+    const total = count * ROW_HEIGHT;
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER_SIZE);
+    const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + 2 * BUFFER_SIZE;
+    const end = Math.min(count, start + visibleCount);
+
+    return {
+      visibleRows: rows.slice(start, end),
+      startIndex: start,
+      totalHeight: total,
+      paddingTop: start * ROW_HEIGHT,
+    };
+  }, [rows, scrollTop, viewportHeight]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  };
 
   // Statistics
   const stats = useMemo(() => {
@@ -316,6 +388,11 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     }
   };
 
+  const handleBack = async () => {
+    await invoke('cancel_comparison');
+    onBack();
+  };
+
   const dirNameA = dirA ? dirA.split(/[\\/]/).filter(Boolean).pop() || dirA : '';
   const dirNameB = dirB ? dirB.split(/[\\/]/).filter(Boolean).pop() || dirB : '';
 
@@ -332,24 +409,39 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
         background: 'var(--bg-surface)',
         gap: '8px',
       }}>
-        {/* Left: Navigation & Summary */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        {/* Left: Navigation, Status & Summary */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
           <Tooltip content="Back to Portal" position="bottom">
-            <button className="icon-btn" onClick={onBack}>
+            <button className="icon-btn" onClick={handleBack}>
               <ArrowLeft size={15} />
             </button>
           </Tooltip>
 
           {dirA && dirB && (
-            <Tooltip content="Rescan" position="bottom">
-              <button className="icon-btn" onClick={runCompare} disabled={isLoading || isExecuting}>
-                <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+            <Tooltip content={isLoading ? "Cancel Scan" : "Rescan"} position="bottom">
+              <button
+                className="icon-btn"
+                onClick={isLoading ? handleCancelScan : runCompare}
+                disabled={isExecuting}
+                style={{ color: isLoading ? 'var(--status-danger)' : 'inherit' }}
+              >
+                {isLoading ? <X size={14} /> : <RefreshCw size={14} />}
               </button>
             </Tooltip>
           )}
 
-          {/* Compact summary badges */}
-          {entries.length > 0 && (
+          {/* Live scanning progress indicator */}
+          {isLoading && scanProgress && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
+              <Loader2 size={13} className="animate-spin" style={{ color: 'var(--status-info)' }} />
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                {scanProgress.count.toLocaleString()} files ({scanProgress.phase})
+              </span>
+            </div>
+          )}
+
+          {/* Compact summary badges (when ready) */}
+          {!isLoading && entries.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
               <span style={{
                 fontSize: '11px',
@@ -374,8 +466,19 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
           )}
         </div>
 
-        {/* Right: Filter & Batch Actions */}
+        {/* Right: Prune Toggle, Filter & Batch Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {/* Smart Pruning Toggle */}
+          <Tooltip content={pruneIgnored ? "Smart Prune: ON (Skips node_modules/target/git)" : "Smart Prune: OFF (Scan all files)"} position="bottom">
+            <button
+              className="icon-btn"
+              onClick={() => setPruneIgnored(!pruneIgnored)}
+              style={{ color: pruneIgnored ? 'var(--status-success)' : 'var(--status-warning)' }}
+            >
+              {pruneIgnored ? <Shield size={14} /> : <ShieldAlert size={14} />}
+            </button>
+          </Tooltip>
+
           {entries.length > 0 && (
             <>
               <Tooltip content={onlyDiffs ? "Show All Items" : "Show Only Differences"} position="bottom">
@@ -391,25 +494,25 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               <div style={{ width: '1px', height: '18px', background: 'var(--border-default)', margin: '0 4px' }} />
 
               <Tooltip content="Sync Newer Files" position="bottom">
-                <button className="icon-btn" onClick={applyPresetNewer} disabled={isExecuting}>
+                <button className="icon-btn" onClick={applyPresetNewer} disabled={isExecuting || isLoading}>
                   <Sparkles size={14} />
                 </button>
               </Tooltip>
 
               <Tooltip content="Mirror A to B" position="bottom">
-                <button className="icon-btn" onClick={applyPresetMirrorAtoB} disabled={isExecuting}>
+                <button className="icon-btn" onClick={applyPresetMirrorAtoB} disabled={isExecuting || isLoading}>
                   <ArrowRightToLine size={14} />
                 </button>
               </Tooltip>
 
               <Tooltip content="Mirror B to A" position="bottom">
-                <button className="icon-btn" onClick={applyPresetMirrorBtoA} disabled={isExecuting}>
+                <button className="icon-btn" onClick={applyPresetMirrorBtoA} disabled={isExecuting || isLoading}>
                   <ArrowLeftToLine size={14} />
                 </button>
               </Tooltip>
 
               <Tooltip content="Reset All Actions" position="bottom">
-                <button className="icon-btn" onClick={resetActions} disabled={isExecuting || pendingActionsCount === 0}>
+                <button className="icon-btn" onClick={resetActions} disabled={isExecuting || isLoading || pendingActionsCount === 0}>
                   <RotateCcw size={14} />
                 </button>
               </Tooltip>
@@ -423,7 +526,6 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
         {/* If one or both directories not selected -> Empty State Prompts */}
         {(!dirA || !dirB) ? (
           <div style={{ display: 'flex', flex: 1, padding: '16px', gap: '16px', background: 'var(--bg-base)' }}>
-            {/* Left Slot: Directory A */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               {dirA ? (
                 <SelectedPaneHeader
@@ -439,7 +541,6 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               )}
             </div>
 
-            {/* Right Slot: Directory B */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               {dirB ? (
                 <SelectedPaneHeader
@@ -456,9 +557,9 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
             </div>
           </div>
         ) : (
-          /* Both Selected: Dual-Pane Synchronized Tree */
+          /* Both Selected: Dual-Pane Synchronized Virtual Tree */
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-            {/* Pane Headers */}
+            {/* Active Headers */}
             <div style={{
               display: 'grid',
               gridTemplateColumns: '1fr 140px 1fr',
@@ -481,27 +582,45 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               />
             </div>
 
-            {/* Tree Body */}
-            <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-              {isLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', color: 'var(--text-secondary)' }}>
-                  <Loader2 size={18} className="animate-spin" />
+            {/* Virtual Scroll Container */}
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                position: 'relative',
+              }}
+            >
+              {isLoading && rows.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '10px', color: 'var(--text-secondary)' }}>
+                  <Loader2 size={24} className="animate-spin" style={{ color: 'var(--status-info)' }} />
+                  {scanProgress && (
+                    <span style={{ fontSize: '12px' }}>
+                      {scanProgress.count.toLocaleString()} files scanned ({scanProgress.phase})
+                    </span>
+                  )}
                 </div>
               ) : rows.length === 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)', fontSize: '13px' }}>
                   {onlyDiffs ? 'Identical (0 differences)' : 'Empty directory'}
                 </div>
               ) : (
-                rows.map((row) => (
-                  <DualTreeRow
-                    key={row.node.relative_path}
-                    row={row}
-                    action={actionMap.get(row.node.relative_path) || 'skip'}
-                    onToggleExpand={() => toggleExpand(row.node.relative_path)}
-                    onSetAction={(act) => setAction(row.node.relative_path, act)}
-                    onOpenDiff={() => handleOpenDiff(row.node.relative_path)}
-                  />
-                ))
+                <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
+                  <div style={{ transform: `translateY(${paddingTop}px)` }}>
+                    {visibleRows.map((row, index) => (
+                      <DualTreeRow
+                        key={row.node.relative_path || startIndex + index}
+                        row={row}
+                        action={actionMap.get(row.node.relative_path) || 'skip'}
+                        onToggleExpand={() => toggleExpand(row.node.relative_path)}
+                        onSetAction={(act) => setAction(row.node.relative_path, act)}
+                        onOpenDiff={() => handleOpenDiff(row.node.relative_path)}
+                      />
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -686,7 +805,7 @@ function ActiveHeaderBar({
   );
 }
 
-// Subcomponents: DualTreeRow (Direct Visual Preview on Tree!)
+// Subcomponents: DualTreeRow (Direct Visual Preview with virtual row height)
 function DualTreeRow({
   row,
   action,
@@ -705,13 +824,11 @@ function DualTreeRow({
   const existsInA = Boolean(node.meta_a);
   const existsInB = Boolean(node.meta_b);
 
-  // Preview state on side A
   const isGhostA = !existsInA && action === 'copy_b_to_a';
   const isDeletedA = existsInA && action === 'delete_a';
   const isTransferredAtoB = existsInA && action === 'copy_a_to_b';
   const isOverwrittenByB = existsInA && action === 'copy_b_to_a';
 
-  // Preview state on side B
   const isGhostB = !existsInB && action === 'copy_a_to_b';
   const isDeletedB = existsInB && action === 'delete_b';
   const isTransferredBtoA = existsInB && action === 'copy_b_to_a';
@@ -721,11 +838,11 @@ function DualTreeRow({
     <div style={{
       display: 'grid',
       gridTemplateColumns: '1fr 140px 1fr',
-      minHeight: '28px',
+      height: `${ROW_HEIGHT}px`,
       borderBottom: '1px solid var(--border-subtle)',
       alignItems: 'center',
       fontSize: '12px',
-      transition: 'background 0.15s ease',
+      boxSizing: 'border-box',
     }}
     onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)'; }}
     onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -741,7 +858,6 @@ function DualTreeRow({
         opacity: isDeletedA ? 0.45 : isGhostA ? 0.75 : 1,
         textDecoration: isDeletedA ? 'line-through' : 'none',
       }}>
-        {/* Expansion chevron or indent placeholder */}
         {hasChildren ? (
           <button
             onClick={onToggleExpand}
@@ -753,14 +869,12 @@ function DualTreeRow({
           <span style={{ width: 14 }} />
         )}
 
-        {/* Icon */}
         {node.is_dir ? (
           <Folder size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
         ) : (
           <FileText size={14} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
         )}
 
-        {/* Name and preview badges */}
         {existsInA ? (
           <span
             style={{
@@ -788,7 +902,6 @@ function DualTreeRow({
           <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>—</span>
         )}
 
-        {/* Preview action tags on Node A */}
         {isTransferredAtoB && (
           <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '4px', background: 'var(--status-info-light)', color: 'var(--status-info)', flexShrink: 0 }}>
             ➔ B
@@ -805,7 +918,6 @@ function DualTreeRow({
           </span>
         )}
 
-        {/* Size & Time Tooltip */}
         {existsInA && !node.is_dir && (
           <Tooltip content={`Modified: ${formatTimestamp(node.meta_a?.modified_timestamp)}`} position="top">
             <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginLeft: 'auto', paddingRight: '8px', flexShrink: 0, cursor: 'default' }}>
@@ -823,7 +935,6 @@ function DualTreeRow({
           <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />
         ) : (
           <>
-            {/* Copy A -> B */}
             <Tooltip content="Copy A ➔ B" position="top">
               <button
                 className="icon-btn"
@@ -839,7 +950,6 @@ function DualTreeRow({
               </button>
             </Tooltip>
 
-            {/* Copy B -> A */}
             <Tooltip content="Copy B ⬅ A" position="top">
               <button
                 className="icon-btn"
@@ -855,7 +965,6 @@ function DualTreeRow({
               </button>
             </Tooltip>
 
-            {/* Delete button */}
             <Tooltip content="Delete" position="top">
               <button
                 className="icon-btn danger"
@@ -879,7 +988,6 @@ function DualTreeRow({
               </button>
             </Tooltip>
 
-            {/* Reset / Skip */}
             <Tooltip content="Skip" position="top">
               <button
                 className="icon-btn"
@@ -894,7 +1002,6 @@ function DualTreeRow({
               </button>
             </Tooltip>
 
-            {/* If Modified text file -> Inspect Diff */}
             {node.diff_kind.type === 'Modified' && (
               <Tooltip content="Inspect Diff" position="top">
                 <button
@@ -921,17 +1028,14 @@ function DualTreeRow({
         opacity: isDeletedB ? 0.45 : isGhostB ? 0.75 : 1,
         textDecoration: isDeletedB ? 'line-through' : 'none',
       }}>
-        {/* Spacer for alignment with chevron */}
         <span style={{ width: 14 }} />
 
-        {/* Icon */}
         {node.is_dir ? (
           <Folder size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
         ) : (
           <FileText size={14} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
         )}
 
-        {/* Name and preview badges */}
         {existsInB ? (
           <span
             style={{
@@ -959,7 +1063,6 @@ function DualTreeRow({
           <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>—</span>
         )}
 
-        {/* Preview action tags on Node B */}
         {isTransferredBtoA && (
           <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '4px', background: 'var(--status-info-light)', color: 'var(--status-info)', flexShrink: 0 }}>
             ⬅ A
@@ -976,7 +1079,6 @@ function DualTreeRow({
           </span>
         )}
 
-        {/* Size & Time Tooltip */}
         {existsInB && !node.is_dir && (
           <Tooltip content={`Modified: ${formatTimestamp(node.meta_b?.modified_timestamp)}`} position="top">
             <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginLeft: 'auto', paddingRight: '8px', flexShrink: 0, cursor: 'default' }}>
