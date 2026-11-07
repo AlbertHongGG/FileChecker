@@ -1,12 +1,17 @@
-import { UnifiedEntry, TreeNode, FlattenedRow, DescendantEntry } from '../../../types';
+import { UnifiedEntry, TreeNode, FlattenedRow } from '../../../types';
+
+const NATURAL_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+});
 
 interface SubtreeSummary {
   hasA: boolean;
   hasB: boolean;
   hasDiff: boolean;
   childCount: number;
-  modifiableFiles: string[];
-  descendantEntries: DescendantEntry[];
+  hasModifiable: boolean;
+  modifiableCount: number;
 }
 
 function propagateDirectoryState(node: TreeNode): SubtreeSummary {
@@ -14,18 +19,15 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     const hasA = Boolean(node.meta_a);
     const hasB = Boolean(node.meta_b);
     const hasDiff = node.diff_kind.type !== 'Identical';
-    const modifiableFiles = node.diff_kind.type === 'Modified' ? [node.relative_path] : [];
-    const descendantEntries: DescendantEntry[] = [
-      { path: node.relative_path, diffType: node.diff_kind.type, isDir: false },
-    ];
+    const hasModifiable = node.diff_kind.type === 'Modified';
 
     return {
       hasA,
       hasB,
       hasDiff,
       childCount: 1,
-      modifiableFiles,
-      descendantEntries,
+      hasModifiable,
+      modifiableCount: hasModifiable ? 1 : 0,
     };
   }
 
@@ -33,8 +35,8 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
   let hasB = Boolean(node.meta_b);
   let hasDiff = false;
   let childCount = 0;
-  const modifiableFiles: string[] = [];
-  const descendantEntries: DescendantEntry[] = [];
+  let hasModifiable = false;
+  let modifiableCount = 0;
 
   if (node.children && node.children.length > 0) {
     for (const child of node.children) {
@@ -42,14 +44,9 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       if (summary.hasA) hasA = true;
       if (summary.hasB) hasB = true;
       if (summary.hasDiff) hasDiff = true;
+      if (summary.hasModifiable) hasModifiable = true;
+      modifiableCount += summary.modifiableCount;
       childCount += summary.childCount;
-
-      for (const m of summary.modifiableFiles) {
-        modifiableFiles.push(m);
-      }
-      for (const d of summary.descendantEntries) {
-        descendantEntries.push(d);
-      }
     }
   }
 
@@ -81,23 +78,16 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     node.diff_kind = { type: 'Identical' };
   }
 
-  // Include the directory entity itself in descendantEntries
-  descendantEntries.push({
-    path: node.relative_path,
-    diffType: node.diff_kind.type,
-    isDir: true,
-  });
-
-  node.modifiableFiles = modifiableFiles;
-  node.descendantEntries = descendantEntries;
+  node.hasModifiable = hasModifiable;
+  node.modifiableCount = modifiableCount;
 
   return {
     hasA,
     hasB,
     hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
     childCount,
-    modifiableFiles,
-    descendantEntries,
+    hasModifiable,
+    modifiableCount,
   };
 }
 
@@ -150,16 +140,13 @@ export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
   // Bottom-up propagation of directory presence and difference status
   roots.forEach(propagateDirectoryState);
 
-  // Sort: directories first, then natural alphabetical
+  // Fast natural sort using singleton Intl.Collator
   function sortNodes(nodes: TreeNode[]) {
     nodes.sort((a, b) => {
       if (a.is_dir !== b.is_dir) {
         return a.is_dir ? -1 : 1;
       }
-      return a.name.localeCompare(b.name, undefined, {
-        numeric: true,
-        sensitivity: 'base',
-      });
+      return NATURAL_COLLATOR.compare(a.name, b.name);
     });
     for (const node of nodes) {
       if (node.children) {
@@ -181,6 +168,7 @@ export function flattenTree(
 
   function traverse(currentNodes: TreeNode[], depth: number) {
     for (const node of currentNodes) {
+      // In onlyDiffs mode, exclude nodes (both files and folders) that are already identical
       if (onlyDiffs && node.diff_kind.type === 'Identical') {
         continue;
       }

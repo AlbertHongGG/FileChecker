@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileMetadata {
@@ -39,11 +38,4 @@ pub struct FileDiffPayload {
     pub is_too_large: bool,
     pub size_a: u64,
     pub size_b: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AnchorItem {
-    pub name: String,
-    pub path: PathBuf,
-    pub is_dir: bool,
 }

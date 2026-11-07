@@ -1,130 +1,104 @@
-pub mod anchor;
-pub mod hdd_sequential;
-pub mod ssd_parallel;
+pub mod mft_engine;
+pub mod win32_engine;
 
-use crate::error::{AppError, AppResult};
-use crate::models::{AnchorItem, FileMetadata};
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use crate::error::AppResult;
+use crate::models::FileMetadata;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
 
-pub fn get_default_prune_set() -> HashSet<&'static str> {
-    let mut set = HashSet::new();
-    set.insert("node_modules");
-    set.insert("target");
-    set.insert(".git");
-    set.insert("dist");
-    set.insert(".next");
-    set.insert(".nuxt");
-    set.insert(".venv");
-    set.insert("venv");
-    set.insert("__pycache__");
-    set.insert(".idea");
-    set.insert(".vscode");
-    set.insert(".cache");
-    set.insert("bin");
-    set.insert("obj");
-    set.insert(".turbo");
-    set.insert(".output");
-    set.insert(".gradle");
-    set
+pub type ScanSnapshot = FxHashMap<String, FileMetadata>;
+
+#[derive(Debug, Clone)]
+pub struct ScanPolicy {
+    pub prune_ignored: bool,
+    prune_set: FxHashSet<&'static str>,
 }
 
-pub fn scan_anchor_guided(
-    base_path: &Path,
-    anchors: &[AnchorItem],
-    is_hdd: bool,
-    prune_ignored: bool,
-    cancel_token: &Arc<AtomicBool>,
-    completed: &Arc<AtomicUsize>,
-    current_name: &Arc<Mutex<String>>,
-    counter: &Arc<AtomicUsize>,
-) -> AppResult<HashMap<String, FileMetadata>> {
-    let prune_set = if prune_ignored {
-        Some(get_default_prune_set())
-    } else {
-        None
-    };
-
-    let mut map = HashMap::new();
-
-    for anchor in anchors {
-        if cancel_token.load(Ordering::Relaxed) {
-            return Err(AppError::ScanCancelled);
+impl ScanPolicy {
+    pub fn new(prune_ignored: bool) -> Self {
+        let mut prune_set = FxHashSet::default();
+        if prune_ignored {
+            prune_set.insert("node_modules");
+            prune_set.insert("target");
+            prune_set.insert(".git");
+            prune_set.insert("dist");
+            prune_set.insert(".next");
+            prune_set.insert(".nuxt");
+            prune_set.insert(".venv");
+            prune_set.insert("venv");
+            prune_set.insert("__pycache__");
+            prune_set.insert(".idea");
+            prune_set.insert(".vscode");
+            prune_set.insert(".cache");
+            prune_set.insert("bin");
+            prune_set.insert("obj");
+            prune_set.insert(".turbo");
+            prune_set.insert(".output");
+            prune_set.insert(".gradle");
         }
-
-        if let Ok(mut lock) = current_name.lock() {
-            *lock = anchor.name.clone();
+        Self {
+            prune_ignored,
+            prune_set,
         }
-
-        if anchor.is_dir {
-            // Record the anchor folder entry itself
-            if let Ok(rel) = anchor.path.strip_prefix(base_path) {
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                map.insert(
-                    rel_str,
-                    FileMetadata {
-                        size: 0,
-                        modified_timestamp: 0,
-                        is_dir: true,
-                    },
-                );
-            }
-
-            // Scan subtree
-            if is_hdd {
-                hdd_sequential::scan_hdd_sequential(
-                    &anchor.path,
-                    base_path,
-                    &prune_set,
-                    cancel_token,
-                    counter,
-                    &mut map,
-                )?;
-            } else {
-                ssd_parallel::scan_ssd_parallel_subtree(
-                    &anchor.path,
-                    base_path,
-                    prune_set.clone(),
-                    cancel_token,
-                    counter,
-                    &mut map,
-                )?;
-            }
-        } else {
-            // Anchor is a top-level file
-            if let Ok(rel) = anchor.path.strip_prefix(base_path) {
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                let meta = fs::symlink_metadata(&anchor.path).ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified_timestamp = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-
-                map.insert(
-                    rel_str,
-                    FileMetadata {
-                        size,
-                        modified_timestamp,
-                        is_dir: false,
-                    },
-                );
-
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
-        completed.fetch_add(1, Ordering::Relaxed);
     }
 
-    if let Ok(mut lock) = current_name.lock() {
-        *lock = String::new();
+    #[inline]
+    pub fn should_prune(&self, name: &str) -> bool {
+        if !self.prune_ignored {
+            return false;
+        }
+        self.prune_set.contains(name)
+    }
+}
+
+pub struct ScanObserver {
+    pub cancel_token: Arc<AtomicBool>,
+    pub count: Arc<AtomicUsize>,
+    pub completed_units: Arc<AtomicUsize>,
+    pub total_units: Arc<AtomicUsize>,
+    pub current_name: Arc<Mutex<String>>,
+}
+
+impl ScanObserver {
+    pub fn new(cancel_token: Arc<AtomicBool>) -> Self {
+        Self {
+            cancel_token,
+            count: Arc::new(AtomicUsize::new(0)),
+            completed_units: Arc::new(AtomicUsize::new(0)),
+            total_units: Arc::new(AtomicUsize::new(0)),
+            current_name: Arc::new(Mutex::new(String::new())),
+        }
     }
 
-    Ok(map)
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn inc_files(&self, n: usize) {
+        self.count.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn set_current_name(&self, name: &str) {
+        if let Ok(mut lock) = self.current_name.lock() {
+            *lock = name.to_string();
+        }
+    }
+
+    pub fn set_progress(&self, completed: usize, total: usize) {
+        self.completed_units.store(completed, Ordering::Relaxed);
+        self.total_units.store(total, Ordering::Relaxed);
+    }
+}
+
+pub trait ScanEngine: Send + Sync {
+    fn scan(
+        &self,
+        root: &Path,
+        policy: &ScanPolicy,
+        observer: &ScanObserver,
+    ) -> AppResult<ScanSnapshot>;
 }

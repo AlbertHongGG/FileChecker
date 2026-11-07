@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { TauriClient, FileDiffResult } from '../../../services/tauriClient';
 import { useNotification } from '../../../contexts/NotificationContext';
 import { TreeNode } from '../../../types';
+import { collectModifiableFiles } from '../../compare/utils/subtreeQuery';
 
 export interface DiffSession {
   mode: 'file' | 'directory';
@@ -41,7 +42,7 @@ export function useFileDiff(dirA: string | null, dirB: string | null) {
       if (!dirA || !dirB) return;
 
       if (node.is_dir) {
-        const modifiable = node.modifiableFiles || [];
+        const modifiable = collectModifiableFiles(node);
         if (modifiable.length === 0) return;
 
         const newSession: DiffSession = {

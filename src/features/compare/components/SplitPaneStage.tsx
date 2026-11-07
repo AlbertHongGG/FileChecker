@@ -4,6 +4,7 @@ import {
   FolderCheck,
   HardDrive,
   Cpu,
+  Zap,
 } from 'lucide-react';
 import { ScanProgressPayload } from '../../../types';
 
@@ -13,6 +14,7 @@ export interface SideScanMetrics {
   currentName: string;
   count: number;
   isHdd: boolean;
+  engine?: string;
 }
 
 interface PaneStatusCardProps {
@@ -129,15 +131,25 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
                   fontWeight: 600,
                   padding: '2px 6px',
                   borderRadius: '4px',
-                  background: 'var(--status-info-light)',
-                  color: 'var(--status-info)',
+                  background: metrics?.engine?.includes('MFT')
+                    ? 'var(--status-success-light)'
+                    : 'var(--status-info-light)',
+                  color: metrics?.engine?.includes('MFT')
+                    ? 'var(--status-success)'
+                    : 'var(--status-info)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '4px',
                 }}
               >
-                {metrics?.isHdd ? <HardDrive size={11} /> : <Cpu size={11} />}
-                {metrics?.isHdd ? 'HDD (Sequential)' : 'SSD (Parallel)'}
+                {metrics?.engine?.includes('MFT') ? (
+                  <Zap size={11} />
+                ) : metrics?.isHdd ? (
+                  <HardDrive size={11} />
+                ) : (
+                  <Cpu size={11} />
+                )}
+                {metrics?.engine || (metrics?.isHdd ? 'HDD (Sequential)' : 'SSD (Parallel)')}
               </span>
             </div>
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
@@ -291,6 +303,7 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
         currentName: scanProgress.current_name_a,
         count: scanProgress.count_a,
         isHdd: scanProgress.is_hdd_a,
+        engine: scanProgress.engine_a,
       }
     : null;
 
@@ -301,6 +314,7 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
         currentName: scanProgress.current_name_b,
         count: scanProgress.count_b,
         isHdd: scanProgress.is_hdd_b,
+        engine: scanProgress.engine_b,
       }
     : null;
 

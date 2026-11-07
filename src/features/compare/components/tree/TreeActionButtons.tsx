@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { TreeNode, PlannedAction, DirectoryActionType } from '../../../../types';
 import { Tooltip } from '../../../../components/common/Tooltip';
-import { isDirectoryActionActive } from '../../utils/subtreePolicy';
+import { isSubtreeActionActive } from '../../utils/subtreeQuery';
 
 interface TreeActionButtonsProps {
   node: TreeNode;
@@ -38,18 +38,16 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
       return <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />;
     }
 
-    const descendants = node.descendantEntries || [];
-
     // Directory Capabilities: Mirroring requires existing on that side
     const canMirrorAtoB = existsInA;
     const canMirrorBtoA = existsInB;
     const canDelete = existsInA || existsInB;
-    const hasModifiable = Boolean(node.modifiableFiles && node.modifiableFiles.length > 0);
+    const hasModifiable = Boolean(node.hasModifiable);
 
     // Subtree Policy Active States
-    const isMirrorAtoBActive = isDirectoryActionActive(descendants, actionMap, 'mirror_a_to_b');
-    const isMirrorBtoAActive = isDirectoryActionActive(descendants, actionMap, 'mirror_b_to_a');
-    const isDeleteActive = isDirectoryActionActive(descendants, actionMap, 'delete');
+    const isMirrorAtoBActive = isSubtreeActionActive(node, actionMap, 'mirror_a_to_b');
+    const isMirrorBtoAActive = isSubtreeActionActive(node, actionMap, 'mirror_b_to_a');
+    const isDeleteActive = isSubtreeActionActive(node, actionMap, 'delete');
 
     const tooltipAtoB = !canMirrorAtoB
       ? 'Directory does not exist in A'
@@ -70,7 +68,7 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
       : 'Delete Subtree';
 
     const tooltipDiff = hasModifiable
-      ? `Inspect Diff for ${node.modifiableFiles?.length} modified file(s)`
+      ? `Inspect Diff for ${node.modifiableCount || 1} modified file(s)`
       : 'No modified files to inspect in folder';
 
     return (

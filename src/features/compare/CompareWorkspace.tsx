@@ -10,6 +10,7 @@ import { SplitPaneStage } from './components/SplitPaneStage';
 import { DualTreeVirtualList } from './components/tree/DualTreeVirtualList';
 import { ExecutionBar } from './components/ExecutionBar';
 import { DiffDrawer } from '../diff/components/DiffDrawer';
+import { collectSubtreeDescendants } from './utils/subtreeQuery';
 
 interface CompareWorkspaceProps {
   onBack: () => void;
@@ -159,9 +160,8 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
             onToggleExpand={toggleExpand}
             onSetAction={setAction}
             onSetDirectoryAction={(node, actionType) => {
-              if (node.descendantEntries) {
-                setDirectoryAction(node.descendantEntries, actionType);
-              }
+              const descendants = collectSubtreeDescendants(node);
+              setDirectoryAction(descendants, actionType);
             }}
             onOpenDiff={openDiff}
           />

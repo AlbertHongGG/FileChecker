@@ -1,56 +1,41 @@
 use crate::models::{DiffKind, FileMetadata, UnifiedEntry};
-use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 pub struct DiffComparator;
 
 impl DiffComparator {
     pub fn compare(
-        map_a: HashMap<String, FileMetadata>,
-        map_b: HashMap<String, FileMetadata>,
+        map_a: FxHashMap<String, FileMetadata>,
+        mut map_b: FxHashMap<String, FileMetadata>,
     ) -> Vec<UnifiedEntry> {
-        let mut all_paths: BTreeSet<String> = BTreeSet::new();
-        for key in map_a.keys() {
-            all_paths.insert(key.clone());
-        }
-        for key in map_b.keys() {
-            all_paths.insert(key.clone());
-        }
+        let mut entries = Vec::with_capacity(map_a.len() + map_b.len());
 
-        let mut entries = Vec::with_capacity(all_paths.len());
+        for (rel, meta_a) in map_a {
+            let meta_b = map_b.remove(&rel);
 
-        for rel in all_paths {
-            let meta_a = map_a.get(&rel).cloned();
-            let meta_b = map_b.get(&rel).cloned();
+            let name = match rel.rfind('/') {
+                Some(idx) => rel[idx + 1..].to_string(),
+                None => rel.clone(),
+            };
 
-            let name = Path::new(&rel)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| rel.clone());
+            let is_dir = meta_a.is_dir;
 
-            let is_dir = meta_a
-                .as_ref()
-                .map(|m| m.is_dir)
-                .or_else(|| meta_b.as_ref().map(|m| m.is_dir))
-                .unwrap_or(false);
-
-            let diff_kind = match (&meta_a, &meta_b) {
-                (Some(_), None) => DiffKind::OnlyInA,
-                (None, Some(_)) => DiffKind::OnlyInB,
-                (Some(a), Some(b)) => {
-                    if a.is_dir && b.is_dir {
+            let diff_kind = match &meta_b {
+                None => DiffKind::OnlyInA,
+                Some(b) => {
+                    if meta_a.is_dir && b.is_dir {
                         DiffKind::Identical
-                    } else if a.size == b.size && a.modified_timestamp == b.modified_timestamp {
+                    } else if meta_a.size == b.size && meta_a.modified_timestamp == b.modified_timestamp {
                         DiffKind::Identical
                     } else {
                         DiffKind::Modified {
-                            a_newer: a.modified_timestamp > b.modified_timestamp,
-                            b_newer: b.modified_timestamp > a.modified_timestamp,
-                            same_time: a.modified_timestamp == b.modified_timestamp,
+                            a_newer: meta_a.modified_timestamp > b.modified_timestamp,
+                            b_newer: b.modified_timestamp > meta_a.modified_timestamp,
+                            same_time: meta_a.modified_timestamp == b.modified_timestamp,
                         }
                     }
                 }
-                (None, None) => DiffKind::Identical,
             };
 
             entries.push(UnifiedEntry {
@@ -58,11 +43,32 @@ impl DiffComparator {
                 name,
                 is_dir,
                 diff_kind,
-                meta_a,
+                meta_a: Some(meta_a),
                 meta_b,
             });
         }
 
+        // Remaining elements in map_b exist only in B
+        for (rel, meta_b) in map_b {
+            let name = match rel.rfind('/') {
+                Some(idx) => rel[idx + 1..].to_string(),
+                None => rel.clone(),
+            };
+
+            let is_dir = meta_b.is_dir;
+
+            entries.push(UnifiedEntry {
+                relative_path: rel,
+                name,
+                is_dir,
+                diff_kind: DiffKind::OnlyInB,
+                meta_a: None,
+                meta_b: Some(meta_b),
+            });
+        }
+
+        // Parallel unstable sort in-place by relative_path
+        entries.par_sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
         entries
     }
 }
@@ -73,8 +79,8 @@ mod tests {
 
     #[test]
     fn test_identical_files() {
-        let mut a = HashMap::new();
-        let mut b = HashMap::new();
+        let mut a = FxHashMap::default();
+        let mut b = FxHashMap::default();
         let meta = FileMetadata {
             size: 100,
             modified_timestamp: 1000,
@@ -90,10 +96,24 @@ mod tests {
 
     #[test]
     fn test_only_in_a_and_b() {
-        let mut a = HashMap::new();
-        let mut b = HashMap::new();
-        a.insert("a.txt".to_string(), FileMetadata { size: 10, modified_timestamp: 10, is_dir: false });
-        b.insert("b.txt".to_string(), FileMetadata { size: 20, modified_timestamp: 20, is_dir: false });
+        let mut a = FxHashMap::default();
+        let mut b = FxHashMap::default();
+        a.insert(
+            "a.txt".to_string(),
+            FileMetadata {
+                size: 10,
+                modified_timestamp: 10,
+                is_dir: false,
+            },
+        );
+        b.insert(
+            "b.txt".to_string(),
+            FileMetadata {
+                size: 20,
+                modified_timestamp: 20,
+                is_dir: false,
+            },
+        );
 
         let res = DiffComparator::compare(a, b);
         assert_eq!(res.len(), 2);

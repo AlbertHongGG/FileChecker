@@ -16,8 +16,8 @@ export interface TreeNode {
   meta_a?: FileMetadata | null;
   meta_b?: FileMetadata | null;
   children?: TreeNode[];
-  modifiableFiles?: string[];
-  descendantEntries?: DescendantEntry[];
+  hasModifiable?: boolean;
+  modifiableCount?: number;
 }
 
 export interface FlattenedRow {
