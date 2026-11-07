@@ -5,6 +5,11 @@ interface SubtreeSummary {
   hasB: boolean;
   hasDiff: boolean;
   childCount: number;
+  canCopyAtoB: boolean;
+  canCopyBtoA: boolean;
+  canDelete: boolean;
+  modifiableFiles: string[];
+  descendantFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }>;
 }
 
 function propagateDirectoryState(node: TreeNode): SubtreeSummary {
@@ -12,13 +17,34 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     const hasA = Boolean(node.meta_a);
     const hasB = Boolean(node.meta_b);
     const hasDiff = node.diff_kind.type !== 'Identical';
-    return { hasA, hasB, hasDiff, childCount: 1 };
+    const canCopyAtoB = hasA && node.diff_kind.type !== 'Identical';
+    const canCopyBtoA = hasB && node.diff_kind.type !== 'Identical';
+    const canDelete = hasA || hasB;
+    const modifiableFiles = node.diff_kind.type === 'Modified' ? [node.relative_path] : [];
+    const descendantFiles = [{ path: node.relative_path, diffType: node.diff_kind.type }];
+
+    return {
+      hasA,
+      hasB,
+      hasDiff,
+      childCount: 1,
+      canCopyAtoB,
+      canCopyBtoA,
+      canDelete,
+      modifiableFiles,
+      descendantFiles,
+    };
   }
 
   let hasA = Boolean(node.meta_a);
   let hasB = Boolean(node.meta_b);
   let hasDiff = false;
   let childCount = 0;
+  let canCopyAtoB = false;
+  let canCopyBtoA = false;
+  let canDelete = false;
+  const modifiableFiles: string[] = [];
+  const descendantFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }> = [];
 
   if (node.children && node.children.length > 0) {
     for (const child of node.children) {
@@ -26,9 +52,26 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       if (summary.hasA) hasA = true;
       if (summary.hasB) hasB = true;
       if (summary.hasDiff) hasDiff = true;
+      if (summary.canCopyAtoB) canCopyAtoB = true;
+      if (summary.canCopyBtoA) canCopyBtoA = true;
+      if (summary.canDelete) canDelete = true;
       childCount += summary.childCount;
+
+      for (const m of summary.modifiableFiles) {
+        modifiableFiles.push(m);
+      }
+      for (const d of summary.descendantFiles) {
+        descendantFiles.push(d);
+      }
     }
   }
+
+  // Assign capabilities to folder
+  node.canCopyAtoB = canCopyAtoB;
+  node.canCopyBtoA = canCopyBtoA;
+  node.canDelete = canDelete;
+  node.modifiableFiles = modifiableFiles;
+  node.descendantFiles = descendantFiles;
 
   // Update directory physical presence based on descendants
   if (hasA && !node.meta_a) {
@@ -63,6 +106,11 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     hasB,
     hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
     childCount,
+    canCopyAtoB,
+    canCopyBtoA,
+    canDelete,
+    modifiableFiles,
+    descendantFiles,
   };
 }
 

@@ -11,6 +11,7 @@ interface TreeSideNodeProps {
   hasChildren: boolean;
   isExpanded: boolean;
   action: PlannedAction;
+  actionMap?: Map<string, PlannedAction>;
   onToggleExpand?: () => void;
 }
 
@@ -21,6 +22,7 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
   hasChildren,
   isExpanded,
   action,
+  actionMap,
   onToggleExpand,
 }) => {
   const isSideA = side === 'A';
@@ -30,13 +32,45 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
   const existsOther = Boolean(otherMeta);
 
   // Transfer & Ghost states
-  const isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
-  const isDeleted =
-    exists &&
-    (action === 'delete_both' ||
-      (isSideA ? action === 'delete_a' : action === 'delete_b'));
-  const isTransferredOut = exists && (isSideA ? action === 'copy_a_to_b' : action === 'copy_b_to_a');
-  const isOverwritten = exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
+  let isGhost = false;
+  let isDeleted = false;
+  let isTransferredOut = false;
+  let isOverwritten = false;
+
+  if (node.is_dir) {
+    const descendants = node.descendantFiles || [];
+    if (!exists && existsOther) {
+      // Check if folder is ghost-transferred into this side
+      const eligible = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInB' : d.diffType === 'OnlyInA'));
+      const activeTransfer =
+        eligible.length > 0 &&
+        Boolean(actionMap) &&
+        eligible.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_b_to_a' : 'copy_a_to_b'));
+      isGhost = activeTransfer;
+    } else if (exists) {
+      const eligibleDel = descendants.filter((d) => d.diffType !== 'Identical');
+      isDeleted =
+        eligibleDel.length > 0 &&
+        Boolean(actionMap) &&
+        eligibleDel.every((d) => {
+          const act = actionMap?.get(d.path);
+          return act === 'delete_both' || act === (isSideA ? 'delete_a' : 'delete_b');
+        });
+      const eligibleTrans = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInA' : d.diffType === 'OnlyInB'));
+      isTransferredOut =
+        eligibleTrans.length > 0 &&
+        Boolean(actionMap) &&
+        eligibleTrans.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_a_to_b' : 'copy_b_to_a'));
+    }
+  } else {
+    isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
+    isDeleted =
+      exists &&
+      (action === 'delete_both' ||
+        (isSideA ? action === 'delete_a' : action === 'delete_b'));
+    isTransferredOut = exists && (isSideA ? action === 'copy_a_to_b' : action === 'copy_b_to_a');
+    isOverwritten = exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
+  }
 
   return (
     <div

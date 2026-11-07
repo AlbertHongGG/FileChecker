@@ -15,7 +15,9 @@ interface TreeActionButtonsProps {
   action: PlannedAction;
   existsInA: boolean;
   existsInB: boolean;
+  actionMap?: Map<string, PlannedAction>;
   onSetAction: (act: PlannedAction) => void;
+  onSetDirectoryAction?: (actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip') => void;
   onOpenDiff: () => void;
 }
 
@@ -24,13 +26,158 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
   action,
   existsInA,
   existsInB,
+  actionMap,
   onSetAction,
+  onSetDirectoryAction,
   onOpenDiff,
 }) => {
+  // ─── DIRECTORY ACTION BUTTONS ────────────────────────────
   if (node.is_dir) {
-    return <span style={{ width: 14 }} />;
+    if (node.diff_kind.type === 'Identical') {
+      return <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />;
+    }
+
+    const canCopyAtoB = Boolean(node.canCopyAtoB);
+    const canCopyBtoA = Boolean(node.canCopyBtoA);
+    const canDelete = Boolean(node.canDelete);
+    const hasModifiable = Boolean(node.modifiableFiles && node.modifiableFiles.length > 0);
+
+    // Compute active states for folder action buttons based on child files
+    const descendants = node.descendantFiles || [];
+    const eligibleAtoB = descendants.filter((d) => d.diffType === 'OnlyInA' || d.diffType === 'Modified');
+    const isCopyAtoBActive =
+      eligibleAtoB.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleAtoB.every((d) => actionMap?.get(d.path) === 'copy_a_to_b');
+
+    const eligibleBtoA = descendants.filter((d) => d.diffType === 'OnlyInB' || d.diffType === 'Modified');
+    const isCopyBtoAActive =
+      eligibleBtoA.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleBtoA.every((d) => actionMap?.get(d.path) === 'copy_b_to_a');
+
+    const eligibleDelete = descendants.filter((d) => d.diffType !== 'Identical');
+    const isDeleteActive =
+      eligibleDelete.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleDelete.every((d) => {
+        const act = actionMap?.get(d.path);
+        return act === 'delete_a' || act === 'delete_b' || act === 'delete_both';
+      });
+
+    const tooltipAtoB = !canCopyAtoB
+      ? 'No files to copy to B'
+      : isCopyAtoBActive
+      ? 'Undo Copy Folder to B'
+      : 'Copy Folder contents to Directory B';
+
+    const tooltipBtoA = !canCopyBtoA
+      ? 'No files to copy to A'
+      : isCopyBtoAActive
+      ? 'Undo Copy Folder to A'
+      : 'Copy Folder contents to Directory A';
+
+    const tooltipDelete = !canDelete
+      ? 'No files to delete'
+      : isDeleteActive
+      ? 'Undo Delete Folder'
+      : 'Delete Folder contents';
+
+    const tooltipDiff = hasModifiable
+      ? `Inspect Diff for ${node.modifiableFiles?.length} modified file(s)`
+      : 'No modified files to inspect in folder';
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+        {/* Copy A to B Button */}
+        <Tooltip content={tooltipAtoB} position="top">
+          <button
+            className="icon-btn"
+            disabled={!canCopyAtoB}
+            onClick={() => canCopyAtoB && onSetDirectoryAction && onSetDirectoryAction('copy_a_to_b')}
+            style={{
+              width: '24px',
+              height: '24px',
+              opacity: canCopyAtoB ? 1 : 0.25,
+              cursor: canCopyAtoB ? 'pointer' : 'not-allowed',
+              background: isCopyAtoBActive ? 'var(--status-info)' : 'transparent',
+              color: isCopyAtoBActive ? '#ffffff' : 'var(--text-secondary)',
+            }}
+          >
+            <ArrowRight size={12} />
+          </button>
+        </Tooltip>
+
+        {/* Copy B to A Button */}
+        <Tooltip content={tooltipBtoA} position="top">
+          <button
+            className="icon-btn"
+            disabled={!canCopyBtoA}
+            onClick={() => canCopyBtoA && onSetDirectoryAction && onSetDirectoryAction('copy_b_to_a')}
+            style={{
+              width: '24px',
+              height: '24px',
+              opacity: canCopyBtoA ? 1 : 0.25,
+              cursor: canCopyBtoA ? 'pointer' : 'not-allowed',
+              background: isCopyBtoAActive ? 'var(--status-info)' : 'transparent',
+              color: isCopyBtoAActive ? '#ffffff' : 'var(--text-secondary)',
+            }}
+          >
+            <ArrowLeftIcon size={12} />
+          </button>
+        </Tooltip>
+
+        {/* Delete Button */}
+        <Tooltip content={tooltipDelete} position="top">
+          <button
+            className="icon-btn danger"
+            disabled={!canDelete}
+            onClick={() => canDelete && onSetDirectoryAction && onSetDirectoryAction('delete')}
+            style={{
+              width: '24px',
+              height: '24px',
+              opacity: canDelete ? 1 : 0.25,
+              cursor: canDelete ? 'pointer' : 'not-allowed',
+              background: isDeleteActive ? 'var(--status-danger)' : 'transparent',
+              color: isDeleteActive ? '#ffffff' : 'var(--text-secondary)',
+            }}
+          >
+            <Trash2 size={12} />
+          </button>
+        </Tooltip>
+
+        {/* Skip / Clear Button */}
+        <Tooltip content="Skip / Clear folder actions" position="top">
+          <button
+            className="icon-btn"
+            onClick={() => onSetDirectoryAction && onSetDirectoryAction('skip')}
+            style={{
+              width: '24px',
+              height: '24px',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <Minus size={12} />
+          </button>
+        </Tooltip>
+
+        {/* Folder Diff Button */}
+        {hasModifiable && (
+          <Tooltip content={tooltipDiff} position="top">
+            <button
+              className="icon-btn"
+              onClick={onOpenDiff}
+              style={{ width: '24px', height: '24px', color: 'var(--status-info)' }}
+            >
+              <FileCode size={13} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
+    );
   }
 
+  // ─── FILE ACTION BUTTONS ─────────────────────────────────
   if (node.diff_kind.type === 'Identical') {
     return <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />;
   }

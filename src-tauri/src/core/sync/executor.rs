@@ -49,6 +49,28 @@ impl SyncExecutor {
         }
     }
 
+    /// Recursively cleans up empty parent directories up to root boundary
+    fn clean_empty_parents(root: &Path, target: &Path) {
+        let mut curr = target.parent();
+        while let Some(parent) = curr {
+            if parent == root || !parent.starts_with(root) {
+                break;
+            }
+            // Check if directory is empty
+            if let Ok(mut entries) = fs::read_dir(parent) {
+                if entries.next().is_none() {
+                    // It is empty, remove it
+                    let _ = fs::remove_dir(parent);
+                    curr = parent.parent();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     pub fn execute<F>(
         dir_a: &Path,
         dir_b: &Path,
@@ -116,13 +138,17 @@ impl SyncExecutor {
                 }
                 SyncAction::DeleteA => {
                     Self::safe_remove(&path_a, &task.relative_path)?;
+                    Self::clean_empty_parents(dir_a, &path_a);
                 }
                 SyncAction::DeleteB => {
                     Self::safe_remove(&path_b, &task.relative_path)?;
+                    Self::clean_empty_parents(dir_b, &path_b);
                 }
                 SyncAction::DeleteBoth => {
                     Self::safe_remove(&path_a, &task.relative_path)?;
                     Self::safe_remove(&path_b, &task.relative_path)?;
+                    Self::clean_empty_parents(dir_a, &path_a);
+                    Self::clean_empty_parents(dir_b, &path_b);
                 }
                 SyncAction::Skip => {}
             }

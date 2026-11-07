@@ -40,6 +40,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   const {
     actionMap,
     setAction,
+    setDirectoryAction,
     applyPresetNewer,
     applyPresetMirrorAtoB,
     applyPresetMirrorBtoA,
@@ -69,7 +70,13 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   } = useVirtualScroll(rows);
 
   // 5. File pair diff viewer drawer
-  const { diffTarget, openDiff, closeDiff } = useFileDiff(dirA, dirB);
+  const {
+    diffSession,
+    isLoadingDiff,
+    openDiff,
+    selectDiffFile,
+    closeDiff,
+  } = useFileDiff(dirA, dirB);
 
   const handleBack = useCallback(async () => {
     await cancelScan();
@@ -185,6 +192,11 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               actionMap={actionMap}
               onToggleExpand={toggleExpand}
               onSetAction={setAction}
+              onSetDirectoryAction={(node, actionType) => {
+                if (node.descendantFiles) {
+                  setDirectoryAction(node.descendantFiles, actionType);
+                }
+              }}
               onOpenDiff={openDiff}
               onCancelScan={cancelScan}
             />
@@ -192,13 +204,13 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
         )}
 
         {/* Diff Drawer Modal */}
-        {diffTarget && (
+        {diffSession && (
           <DiffDrawer
-            relativePath={diffTarget.path}
-            contentA={diffTarget.contentA}
-            contentB={diffTarget.contentB}
+            session={diffSession}
+            isLoading={isLoadingDiff}
             dirNameA={dirNameA}
             dirNameB={dirNameB}
+            onSelectFile={selectDiffFile}
             onClose={closeDiff}
           />
         )}

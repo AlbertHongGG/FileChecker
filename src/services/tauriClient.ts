@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { UnifiedEntry, SyncTask } from '../types';
 
+export interface FileDiffResult {
+  content_a: string;
+  content_b: string;
+  is_binary: boolean;
+  is_too_large: boolean;
+  size_a: number;
+  size_b: number;
+}
+
 export class TauriClient {
   static async compareDirectories(
     dirA: string,
@@ -34,8 +43,8 @@ export class TauriClient {
     dirA: string,
     dirB: string,
     relativePath: string
-  ): Promise<[string, string]> {
-    return invoke<[string, string]>('get_file_content_pair', {
+  ): Promise<FileDiffResult> {
+    return invoke<FileDiffResult>('get_file_content_pair', {
       dirA,
       dirB,
       relativePath,

@@ -51,6 +51,95 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
     });
   }, []);
 
+  const setDirectoryAction = useCallback(
+    (
+      targetFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }>,
+      actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
+    ) => {
+      setActionMap((prev) => {
+        const next = new Map(prev);
+
+        if (actionType === 'skip') {
+          for (const f of targetFiles) {
+            next.delete(f.path);
+          }
+          return next;
+        }
+
+        if (actionType === 'copy_a_to_b') {
+          // Check if all eligible are already copy_a_to_b -> toggle to skip
+          const eligible = targetFiles.filter(
+            (f) => f.diffType === 'OnlyInA' || f.diffType === 'Modified'
+          );
+          const allActive =
+            eligible.length > 0 &&
+            eligible.every((f) => next.get(f.path) === 'copy_a_to_b');
+
+          for (const f of eligible) {
+            if (allActive) {
+              next.delete(f.path);
+            } else {
+              next.set(f.path, 'copy_a_to_b');
+            }
+          }
+          return next;
+        }
+
+        if (actionType === 'copy_b_to_a') {
+          // Check if all eligible are already copy_b_to_a -> toggle to skip
+          const eligible = targetFiles.filter(
+            (f) => f.diffType === 'OnlyInB' || f.diffType === 'Modified'
+          );
+          const allActive =
+            eligible.length > 0 &&
+            eligible.every((f) => next.get(f.path) === 'copy_b_to_a');
+
+          for (const f of eligible) {
+            if (allActive) {
+              next.delete(f.path);
+            } else {
+              next.set(f.path, 'copy_b_to_a');
+            }
+          }
+          return next;
+        }
+
+        if (actionType === 'delete') {
+          // Check if all eligible are already delete
+          const eligible = targetFiles.filter((f) => f.diffType !== 'Identical');
+          const allActive =
+            eligible.length > 0 &&
+            eligible.every((f) => {
+              const current = next.get(f.path);
+              return (
+                current === 'delete_a' ||
+                current === 'delete_b' ||
+                current === 'delete_both'
+              );
+            });
+
+          for (const f of eligible) {
+            if (allActive) {
+              next.delete(f.path);
+            } else {
+              if (f.diffType === 'OnlyInA') {
+                next.set(f.path, 'delete_a');
+              } else if (f.diffType === 'OnlyInB') {
+                next.set(f.path, 'delete_b');
+              } else {
+                next.set(f.path, 'delete_both');
+              }
+            }
+          }
+          return next;
+        }
+
+        return next;
+      });
+    },
+    []
+  );
+
   const applyPresetNewer = useCallback(() => {
     const next = new Map<string, PlannedAction>();
     for (const e of entries) {
@@ -177,6 +266,7 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
   return {
     actionMap,
     setAction,
+    setDirectoryAction,
     applyPresetNewer,
     applyPresetMirrorAtoB,
     applyPresetMirrorBtoA,

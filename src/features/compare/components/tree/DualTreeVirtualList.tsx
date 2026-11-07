@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Loader2, X } from 'lucide-react';
-import { FlattenedRow, PlannedAction, ScanProgressPayload } from '../../../../types';
+import { FlattenedRow, PlannedAction, ScanProgressPayload, TreeNode } from '../../../../types';
 import { DualTreeRow } from './DualTreeRow';
 
 interface DualTreeVirtualListProps {
@@ -16,7 +16,11 @@ interface DualTreeVirtualListProps {
   actionMap: Map<string, PlannedAction>;
   onToggleExpand: (path: string) => void;
   onSetAction: (path: string, act: PlannedAction) => void;
-  onOpenDiff: (path: string) => void;
+  onSetDirectoryAction?: (
+    node: TreeNode,
+    actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
+  ) => void;
+  onOpenDiff: (node: TreeNode) => void;
   onCancelScan?: () => void;
 }
 
@@ -33,6 +37,7 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
   actionMap,
   onToggleExpand,
   onSetAction,
+  onSetDirectoryAction,
   onOpenDiff,
   onCancelScan,
 }) => {
@@ -232,9 +237,15 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
                 key={row.node.relative_path}
                 row={row}
                 action={actionMap.get(row.node.relative_path) || 'skip'}
+                actionMap={actionMap}
                 onToggleExpand={() => onToggleExpand(row.node.relative_path)}
                 onSetAction={(act) => onSetAction(row.node.relative_path, act)}
-                onOpenDiff={() => onOpenDiff(row.node.relative_path)}
+                onSetDirectoryAction={
+                  onSetDirectoryAction
+                    ? (actionType) => onSetDirectoryAction(row.node, actionType)
+                    : undefined
+                }
+                onOpenDiff={() => onOpenDiff(row.node)}
               />
             ))}
           </div>

@@ -8,6 +8,12 @@ export interface TreeNode {
   meta_a?: FileMetadata | null;
   meta_b?: FileMetadata | null;
   children?: TreeNode[];
+  // Directory capabilities computed bottom-up
+  canCopyAtoB?: boolean;
+  canCopyBtoA?: boolean;
+  canDelete?: boolean;
+  modifiableFiles?: string[];
+  descendantFiles?: Array<{ path: string; diffType: DiffKind['type'] }>;
 }
 
 export interface FlattenedRow {

@@ -31,6 +31,16 @@ pub struct UnifiedEntry {
     pub meta_b: Option<FileMetadata>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileDiffPayload {
+    pub content_a: String,
+    pub content_b: String,
+    pub is_binary: bool,
+    pub is_too_large: bool,
+    pub size_a: u64,
+    pub size_b: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct AnchorItem {
     pub name: String,
