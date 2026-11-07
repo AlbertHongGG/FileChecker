@@ -86,8 +86,8 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
         textDecoration: isDeleted ? 'line-through' : 'none',
       }}
     >
-      {/* Expander Arrow on both Side A and Side B when the node exists on that side */}
-      {exists && hasChildren ? (
+      {/* Expander Arrow on both sides whenever this tree row has children */}
+      {hasChildren ? (
         <button
           onClick={onToggleExpand}
           style={{
@@ -97,6 +97,10 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
             padding: 0,
             color: 'var(--text-tertiary)',
             display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '14px',
+            height: '14px',
           }}
           title={isExpanded ? 'Collapse Folder' : 'Expand Folder'}
         >
