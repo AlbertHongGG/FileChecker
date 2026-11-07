@@ -7,8 +7,13 @@ import {
   SyncTask,
   SyncProgressPayload,
   DescendantEntry,
+  DirectoryActionType,
 } from '../../../types';
 import { useNotification } from '../../../contexts/NotificationContext';
+import {
+  getExpectedEntryAction,
+  isDirectoryActionActive,
+} from '../utils/subtreePolicy';
 
 export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
   const [actionMap, setActionMap] = useState<Map<string, PlannedAction>>(
@@ -55,7 +60,7 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
   const setDirectoryAction = useCallback(
     (
       targetEntries: DescendantEntry[],
-      actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
+      actionType: DirectoryActionType
     ) => {
       setActionMap((prev) => {
         const next = new Map(prev);
@@ -67,72 +72,22 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
           return next;
         }
 
-        if (actionType === 'copy_a_to_b') {
-          // All items present in A or modified
-          const eligible = targetEntries.filter(
-            (item) => item.diffType === 'OnlyInA' || item.diffType === 'Modified'
-          );
-          const allActive =
-            eligible.length > 0 &&
-            eligible.every((item) => next.get(item.path) === 'copy_a_to_b');
+        // If the subtree is already fully in this state, toggle back to skip
+        const isAlreadyActive = isDirectoryActionActive(targetEntries, prev, actionType);
 
-          for (const item of eligible) {
-            if (allActive) {
-              next.delete(item.path);
+        for (const item of targetEntries) {
+          if (item.diffType === 'Identical') continue;
+
+          if (isAlreadyActive) {
+            next.delete(item.path);
+          } else {
+            const expected = getExpectedEntryAction(item.diffType, actionType);
+            if (expected) {
+              next.set(item.path, expected);
             } else {
-              next.set(item.path, 'copy_a_to_b');
+              next.delete(item.path);
             }
           }
-          return next;
-        }
-
-        if (actionType === 'copy_b_to_a') {
-          // All items present in B or modified
-          const eligible = targetEntries.filter(
-            (item) => item.diffType === 'OnlyInB' || item.diffType === 'Modified'
-          );
-          const allActive =
-            eligible.length > 0 &&
-            eligible.every((item) => next.get(item.path) === 'copy_b_to_a');
-
-          for (const item of eligible) {
-            if (allActive) {
-              next.delete(item.path);
-            } else {
-              next.set(item.path, 'copy_b_to_a');
-            }
-          }
-          return next;
-        }
-
-        if (actionType === 'delete') {
-          // All items with any difference (OnlyInA, OnlyInB, or Modified)
-          const eligible = targetEntries.filter((item) => item.diffType !== 'Identical');
-          const allActive =
-            eligible.length > 0 &&
-            eligible.every((item) => {
-              const current = next.get(item.path);
-              return (
-                current === 'delete_a' ||
-                current === 'delete_b' ||
-                current === 'delete_both'
-              );
-            });
-
-          for (const item of eligible) {
-            if (allActive) {
-              next.delete(item.path);
-            } else {
-              if (item.diffType === 'OnlyInA') {
-                next.set(item.path, 'delete_a');
-              } else if (item.diffType === 'OnlyInB') {
-                next.set(item.path, 'delete_b');
-              } else {
-                next.set(item.path, 'delete_both');
-              }
-            }
-          }
-          return next;
         }
 
         return next;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FlattenedRow, PlannedAction } from '../../../../types';
+import { FlattenedRow, PlannedAction, DirectoryActionType } from '../../../../types';
 import { TreeSideNode } from './TreeSideNode';
 import { TreeActionButtons } from './TreeActionButtons';
 import { ROW_HEIGHT } from '../../hooks/useVirtualScroll';
@@ -10,7 +10,7 @@ interface DualTreeRowProps {
   actionMap?: Map<string, PlannedAction>;
   onToggleExpand: () => void;
   onSetAction: (act: PlannedAction) => void;
-  onSetDirectoryAction?: (actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip') => void;
+  onSetDirectoryAction?: (actionType: DirectoryActionType) => void;
   onOpenDiff: () => void;
 }
 
@@ -53,7 +53,6 @@ export const DualTreeRow: React.FC<DualTreeRowProps> = ({
         hasChildren={hasChildren}
         isExpanded={isExpanded}
         action={action}
-        actionMap={actionMap}
         onToggleExpand={onToggleExpand}
       />
 
@@ -77,7 +76,6 @@ export const DualTreeRow: React.FC<DualTreeRowProps> = ({
         hasChildren={hasChildren}
         isExpanded={isExpanded}
         action={action}
-        actionMap={actionMap}
         onToggleExpand={onToggleExpand}
       />
     </div>

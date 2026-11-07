@@ -11,7 +11,6 @@ interface TreeSideNodeProps {
   hasChildren: boolean;
   isExpanded: boolean;
   action: PlannedAction;
-  actionMap?: Map<string, PlannedAction>;
   onToggleExpand?: () => void;
 }
 
@@ -22,7 +21,6 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
   hasChildren,
   isExpanded,
   action,
-  actionMap,
   onToggleExpand,
 }) => {
   const isSideA = side === 'A';
@@ -31,47 +29,14 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
   const exists = Boolean(meta);
   const existsOther = Boolean(otherMeta);
 
-  // Transfer & Ghost states
-  let isGhost = false;
-  let isDeleted = false;
-  let isTransferredOut = false;
-  let isOverwritten = false;
-
-  if (node.is_dir) {
-    const descendants = node.descendantEntries || [];
-
-    if (!exists && existsOther) {
-      // Check if folder or its entries are ghost-transferred into this side
-      const eligible = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInB' : d.diffType === 'OnlyInA'));
-      const activeTransfer =
-        eligible.length > 0 &&
-        Boolean(actionMap) &&
-        eligible.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_b_to_a' : 'copy_a_to_b'));
-      isGhost = activeTransfer;
-    } else if (exists) {
-      const eligibleDel = descendants.filter((d) => d.diffType !== 'Identical');
-      isDeleted =
-        eligibleDel.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleDel.every((d) => {
-          const act = actionMap?.get(d.path);
-          return act === 'delete_both' || act === (isSideA ? 'delete_a' : 'delete_b');
-        });
-      const eligibleTrans = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInA' : d.diffType === 'OnlyInB'));
-      isTransferredOut =
-        eligibleTrans.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleTrans.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_a_to_b' : 'copy_b_to_a'));
-    }
-  } else {
-    isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
-    isDeleted =
-      exists &&
-      (action === 'delete_both' ||
-        (isSideA ? action === 'delete_a' : action === 'delete_b'));
-    isTransferredOut = exists && (isSideA ? action === 'copy_a_to_b' : action === 'copy_b_to_a');
-    isOverwritten = exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
-  }
+  // Transfer & Ghost states: directly resolved via node's own action (O(1))
+  const isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
+  const isDeleted =
+    exists &&
+    (action === 'delete_both' ||
+      (isSideA ? action === 'delete_a' : action === 'delete_b'));
+  const isTransferredOut = exists && (isSideA ? action === 'copy_a_to_b' : action === 'copy_b_to_a');
+  const isOverwritten = exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
 
   return (
     <div
@@ -82,7 +47,7 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
         gap: '6px',
         overflow: 'hidden',
         minWidth: 0,
-        opacity: isDeleted ? 0.45 : isGhost ? 0.75 : 1,
+        opacity: isDeleted ? 0.45 : isGhost ? 0.75 : !exists ? 0.35 : 1,
         textDecoration: isDeleted ? 'line-through' : 'none',
       }}
     >
@@ -112,12 +77,26 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
 
       {/* Node Icon */}
       {node.is_dir ? (
-        <Folder size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+        <Folder
+          size={14}
+          style={{
+            color: exists ? 'var(--text-tertiary)' : 'var(--text-tertiary)',
+            opacity: exists ? 1 : 0.4,
+            flexShrink: 0,
+          }}
+        />
       ) : (
-        <FileText size={14} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
+        <FileText
+          size={14}
+          style={{
+            color: exists ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+            opacity: exists ? 1 : 0.4,
+            flexShrink: 0,
+          }}
+        />
       )}
 
-      {/* Name / Ghost Name */}
+      {/* Name / Ghost Name / Disabled Name (No "—" placeholder, normal display but disabled) */}
       {exists ? (
         <span
           style={{
@@ -144,7 +123,18 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
           + {node.name}
         </span>
       ) : (
-        <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>—</span>
+        /* When item does not exist on this side: display name normally with disabled/dimmed styling */
+        <span
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: 'var(--text-tertiary)',
+            userSelect: 'none',
+          }}
+        >
+          {node.name}
+        </span>
       )}
 
       {/* Transfer Badges */}

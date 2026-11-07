@@ -7,8 +7,9 @@ import {
   Minus,
   FileCode,
 } from 'lucide-react';
-import { TreeNode, PlannedAction } from '../../../../types';
+import { TreeNode, PlannedAction, DirectoryActionType } from '../../../../types';
 import { Tooltip } from '../../../../components/common/Tooltip';
+import { isDirectoryActionActive } from '../../utils/subtreePolicy';
 
 interface TreeActionButtonsProps {
   node: TreeNode;
@@ -17,7 +18,7 @@ interface TreeActionButtonsProps {
   existsInB: boolean;
   actionMap?: Map<string, PlannedAction>;
   onSetAction: (act: PlannedAction) => void;
-  onSetDirectoryAction?: (actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip') => void;
+  onSetDirectoryAction?: (actionType: DirectoryActionType) => void;
   onOpenDiff: () => void;
 }
 
@@ -37,54 +38,36 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
       return <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />;
     }
 
-    const canCopyAtoB = Boolean(node.canCopyAtoB);
-    const canCopyBtoA = Boolean(node.canCopyBtoA);
-    const canDelete = Boolean(node.canDelete);
-    const hasModifiable = Boolean(node.modifiableFiles && node.modifiableFiles.length > 0);
-
-    // Compute active states for folder action buttons based on all subtree entries
     const descendants = node.descendantEntries || [];
 
-    const eligibleAtoB = descendants.filter((d) => d.diffType === 'OnlyInA' || d.diffType === 'Modified');
-    const isCopyAtoBActive =
-      eligibleAtoB.length > 0 &&
-      Boolean(actionMap) &&
-      eligibleAtoB.every((d) => actionMap?.get(d.path) === 'copy_a_to_b');
+    // Directory Capabilities: Mirroring requires existing on that side
+    const canMirrorAtoB = existsInA;
+    const canMirrorBtoA = existsInB;
+    const canDelete = existsInA || existsInB;
+    const hasModifiable = Boolean(node.modifiableFiles && node.modifiableFiles.length > 0);
 
-    const eligibleBtoA = descendants.filter((d) => d.diffType === 'OnlyInB' || d.diffType === 'Modified');
-    const isCopyBtoAActive =
-      eligibleBtoA.length > 0 &&
-      Boolean(actionMap) &&
-      eligibleBtoA.every((d) => actionMap?.get(d.path) === 'copy_b_to_a');
+    // Subtree Policy Active States
+    const isMirrorAtoBActive = isDirectoryActionActive(descendants, actionMap, 'mirror_a_to_b');
+    const isMirrorBtoAActive = isDirectoryActionActive(descendants, actionMap, 'mirror_b_to_a');
+    const isDeleteActive = isDirectoryActionActive(descendants, actionMap, 'delete');
 
-    const eligibleDelete = descendants.filter((d) => d.diffType !== 'Identical');
-    const isDeleteActive =
-      eligibleDelete.length > 0 &&
-      Boolean(actionMap) &&
-      eligibleDelete.every((d) => {
-        const act = actionMap?.get(d.path);
-        return act === 'delete_a' || act === 'delete_b' || act === 'delete_both';
-      });
+    const tooltipAtoB = !canMirrorAtoB
+      ? 'Directory does not exist in A'
+      : isMirrorAtoBActive
+      ? 'Undo Mirror A ➔ B'
+      : 'Mirror Subtree A ➔ B (Copy A & Purge extra in B)';
 
-    const isPureEmpty = descendants.length <= 1;
-
-    const tooltipAtoB = !canCopyAtoB
-      ? isPureEmpty ? 'Folder does not exist in A' : 'No files to copy to B'
-      : isCopyAtoBActive
-      ? 'Undo Copy Folder to B'
-      : isPureEmpty ? 'Copy empty folder to Directory B' : 'Copy Folder contents to Directory B';
-
-    const tooltipBtoA = !canCopyBtoA
-      ? isPureEmpty ? 'Folder does not exist in B' : 'No files to copy to A'
-      : isCopyBtoAActive
-      ? 'Undo Copy Folder to A'
-      : isPureEmpty ? 'Copy empty folder to Directory A' : 'Copy Folder contents to Directory A';
+    const tooltipBtoA = !canMirrorBtoA
+      ? 'Directory does not exist in B'
+      : isMirrorBtoAActive
+      ? 'Undo Mirror B ➔ A'
+      : 'Mirror Subtree B ➔ A (Copy B & Purge extra in A)';
 
     const tooltipDelete = !canDelete
-      ? 'No folder to delete'
+      ? 'No directory to delete'
       : isDeleteActive
-      ? 'Undo Delete Folder'
-      : isPureEmpty ? 'Delete empty folder' : 'Delete Folder contents';
+      ? 'Undo Delete Directory'
+      : 'Delete Subtree';
 
     const tooltipDiff = hasModifiable
       ? `Inspect Diff for ${node.modifiableFiles?.length} modified file(s)`
@@ -92,45 +75,45 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
 
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
-        {/* Copy A to B Button */}
+        {/* Mirror A to B Button */}
         <Tooltip content={tooltipAtoB} position="top">
           <button
             className="icon-btn"
-            disabled={!canCopyAtoB}
-            onClick={() => canCopyAtoB && onSetDirectoryAction && onSetDirectoryAction('copy_a_to_b')}
+            disabled={!canMirrorAtoB}
+            onClick={() => canMirrorAtoB && onSetDirectoryAction && onSetDirectoryAction('mirror_a_to_b')}
             style={{
               width: '24px',
               height: '24px',
-              opacity: canCopyAtoB ? 1 : 0.25,
-              cursor: canCopyAtoB ? 'pointer' : 'not-allowed',
-              background: isCopyAtoBActive ? 'var(--status-info)' : 'transparent',
-              color: isCopyAtoBActive ? '#ffffff' : 'var(--text-secondary)',
+              opacity: canMirrorAtoB ? 1 : 0.25,
+              cursor: canMirrorAtoB ? 'pointer' : 'not-allowed',
+              background: isMirrorAtoBActive ? 'var(--status-info)' : 'transparent',
+              color: isMirrorAtoBActive ? '#ffffff' : 'var(--text-secondary)',
             }}
           >
             <ArrowRight size={12} />
           </button>
         </Tooltip>
 
-        {/* Copy B to A Button */}
+        {/* Mirror B to A Button */}
         <Tooltip content={tooltipBtoA} position="top">
           <button
             className="icon-btn"
-            disabled={!canCopyBtoA}
-            onClick={() => canCopyBtoA && onSetDirectoryAction && onSetDirectoryAction('copy_b_to_a')}
+            disabled={!canMirrorBtoA}
+            onClick={() => canMirrorBtoA && onSetDirectoryAction && onSetDirectoryAction('mirror_b_to_a')}
             style={{
               width: '24px',
               height: '24px',
-              opacity: canCopyBtoA ? 1 : 0.25,
-              cursor: canCopyBtoA ? 'pointer' : 'not-allowed',
-              background: isCopyBtoAActive ? 'var(--status-info)' : 'transparent',
-              color: isCopyBtoAActive ? '#ffffff' : 'var(--text-secondary)',
+              opacity: canMirrorBtoA ? 1 : 0.25,
+              cursor: canMirrorBtoA ? 'pointer' : 'not-allowed',
+              background: isMirrorBtoAActive ? 'var(--status-info)' : 'transparent',
+              color: isMirrorBtoAActive ? '#ffffff' : 'var(--text-secondary)',
             }}
           >
             <ArrowLeftIcon size={12} />
           </button>
         </Tooltip>
 
-        {/* Delete Button */}
+        {/* Delete Subtree Button */}
         <Tooltip content={tooltipDelete} position="top">
           <button
             className="icon-btn danger"

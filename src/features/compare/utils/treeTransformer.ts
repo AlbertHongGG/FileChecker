@@ -5,9 +5,6 @@ interface SubtreeSummary {
   hasB: boolean;
   hasDiff: boolean;
   childCount: number;
-  canCopyAtoB: boolean;
-  canCopyBtoA: boolean;
-  canDelete: boolean;
   modifiableFiles: string[];
   descendantEntries: DescendantEntry[];
 }
@@ -17,9 +14,6 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     const hasA = Boolean(node.meta_a);
     const hasB = Boolean(node.meta_b);
     const hasDiff = node.diff_kind.type !== 'Identical';
-    const canCopyAtoB = hasA && node.diff_kind.type !== 'Identical';
-    const canCopyBtoA = hasB && node.diff_kind.type !== 'Identical';
-    const canDelete = hasA || hasB;
     const modifiableFiles = node.diff_kind.type === 'Modified' ? [node.relative_path] : [];
     const descendantEntries: DescendantEntry[] = [
       { path: node.relative_path, diffType: node.diff_kind.type, isDir: false },
@@ -30,9 +24,6 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       hasB,
       hasDiff,
       childCount: 1,
-      canCopyAtoB,
-      canCopyBtoA,
-      canDelete,
       modifiableFiles,
       descendantEntries,
     };
@@ -42,9 +33,6 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
   let hasB = Boolean(node.meta_b);
   let hasDiff = false;
   let childCount = 0;
-  let canCopyAtoB = false;
-  let canCopyBtoA = false;
-  let canDelete = false;
   const modifiableFiles: string[] = [];
   const descendantEntries: DescendantEntry[] = [];
 
@@ -54,9 +42,6 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       if (summary.hasA) hasA = true;
       if (summary.hasB) hasB = true;
       if (summary.hasDiff) hasDiff = true;
-      if (summary.canCopyAtoB) canCopyAtoB = true;
-      if (summary.canCopyBtoA) canCopyBtoA = true;
-      if (summary.canDelete) canDelete = true;
       childCount += summary.childCount;
 
       for (const m of summary.modifiableFiles) {
@@ -96,31 +81,13 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     node.diff_kind = { type: 'Identical' };
   }
 
-  // Always include the directory itself in descendantEntries so any action on this folder
-  // includes the folder entity itself
+  // Include the directory entity itself in descendantEntries
   descendantEntries.push({
     path: node.relative_path,
     diffType: node.diff_kind.type,
     isDir: true,
   });
 
-  const hasSelfA = Boolean(node.meta_a);
-  const hasSelfB = Boolean(node.meta_b);
-
-  // If no child differences exist, check directory self
-  if (canCopyAtoB || (hasSelfA && !hasSelfB)) {
-    node.canCopyAtoB = true;
-  } else {
-    node.canCopyAtoB = false;
-  }
-
-  if (canCopyBtoA || (hasSelfB && !hasSelfA)) {
-    node.canCopyBtoA = true;
-  } else {
-    node.canCopyBtoA = false;
-  }
-
-  node.canDelete = canDelete || hasSelfA || hasSelfB;
   node.modifiableFiles = modifiableFiles;
   node.descendantEntries = descendantEntries;
 
@@ -129,9 +96,6 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     hasB,
     hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
     childCount,
-    canCopyAtoB: node.canCopyAtoB,
-    canCopyBtoA: node.canCopyBtoA,
-    canDelete: node.canDelete,
     modifiableFiles,
     descendantEntries,
   };
@@ -217,7 +181,6 @@ export function flattenTree(
 
   function traverse(currentNodes: TreeNode[], depth: number) {
     for (const node of currentNodes) {
-      // In onlyDiffs mode, exclude nodes (both files and folders) that are already identical
       if (onlyDiffs && node.diff_kind.type === 'Identical') {
         continue;
       }

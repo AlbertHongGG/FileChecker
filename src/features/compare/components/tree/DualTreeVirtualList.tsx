@@ -1,5 +1,5 @@
 import React from 'react';
-import { FlattenedRow, PlannedAction, TreeNode } from '../../../../types';
+import { FlattenedRow, PlannedAction, TreeNode, DirectoryActionType } from '../../../../types';
 import { DualTreeRow } from './DualTreeRow';
 
 interface DualTreeVirtualListProps {
@@ -15,7 +15,7 @@ interface DualTreeVirtualListProps {
   onSetAction: (path: string, act: PlannedAction) => void;
   onSetDirectoryAction?: (
     node: TreeNode,
-    actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
+    actionType: DirectoryActionType
   ) => void;
   onOpenDiff: (node: TreeNode) => void;
 }

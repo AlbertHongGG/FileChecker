@@ -6,6 +6,8 @@ export interface DescendantEntry {
   isDir: boolean;
 }
 
+export type DirectoryActionType = 'mirror_a_to_b' | 'mirror_b_to_a' | 'delete' | 'skip';
+
 export interface TreeNode {
   relative_path: string;
   name: string;
@@ -14,10 +16,6 @@ export interface TreeNode {
   meta_a?: FileMetadata | null;
   meta_b?: FileMetadata | null;
   children?: TreeNode[];
-  // Directory capabilities computed bottom-up
-  canCopyAtoB?: boolean;
-  canCopyBtoA?: boolean;
-  canDelete?: boolean;
   modifiableFiles?: string[];
   descendantEntries?: DescendantEntry[];
 }
