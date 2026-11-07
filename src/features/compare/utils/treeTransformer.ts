@@ -67,11 +67,25 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
   }
 
   // Assign capabilities to folder
-  node.canCopyAtoB = canCopyAtoB;
-  node.canCopyBtoA = canCopyBtoA;
-  node.canDelete = canDelete;
-  node.modifiableFiles = modifiableFiles;
-  node.descendantFiles = descendantFiles;
+  // If the folder has no child differences/files (empty directory), its own existence determines capabilities
+  const hasSelfA = Boolean(node.meta_a);
+  const hasSelfB = Boolean(node.meta_b);
+
+  if (descendantFiles.length === 0) {
+    // Pure empty folder
+    node.canCopyAtoB = hasSelfA && !hasSelfB;
+    node.canCopyBtoA = hasSelfB && !hasSelfA;
+    node.canDelete = hasSelfA || hasSelfB;
+    node.modifiableFiles = [];
+    node.descendantFiles = [];
+  } else {
+    // Subtree folder with descendants
+    node.canCopyAtoB = canCopyAtoB;
+    node.canCopyBtoA = canCopyBtoA;
+    node.canDelete = canDelete;
+    node.modifiableFiles = modifiableFiles;
+    node.descendantFiles = descendantFiles;
+  }
 
   // Update directory physical presence based on descendants
   if (hasA && !node.meta_a) {
@@ -106,9 +120,9 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     hasB,
     hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
     childCount,
-    canCopyAtoB,
-    canCopyBtoA,
-    canDelete,
+    canCopyAtoB: node.canCopyAtoB ?? false,
+    canCopyBtoA: node.canCopyBtoA ?? false,
+    canDelete: node.canDelete ?? false,
     modifiableFiles,
     descendantFiles,
   };

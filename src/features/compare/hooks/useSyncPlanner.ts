@@ -53,16 +53,64 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
 
   const setDirectoryAction = useCallback(
     (
+      dirPath: string,
+      dirDiffType: UnifiedEntry['diff_kind']['type'],
       targetFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }>,
       actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
     ) => {
       setActionMap((prev) => {
         const next = new Map(prev);
 
+        // Case 1: Pure empty directory (no descendant files)
+        if (targetFiles.length === 0) {
+          if (actionType === 'skip') {
+            next.delete(dirPath);
+            return next;
+          }
+
+          if (actionType === 'copy_a_to_b') {
+            if (next.get(dirPath) === 'copy_a_to_b') {
+              next.delete(dirPath);
+            } else {
+              next.set(dirPath, 'copy_a_to_b');
+            }
+            return next;
+          }
+
+          if (actionType === 'copy_b_to_a') {
+            if (next.get(dirPath) === 'copy_b_to_a') {
+              next.delete(dirPath);
+            } else {
+              next.set(dirPath, 'copy_b_to_a');
+            }
+            return next;
+          }
+
+          if (actionType === 'delete') {
+            const current = next.get(dirPath);
+            if (current === 'delete_a' || current === 'delete_b' || current === 'delete_both') {
+              next.delete(dirPath);
+            } else {
+              if (dirDiffType === 'OnlyInA') {
+                next.set(dirPath, 'delete_a');
+              } else if (dirDiffType === 'OnlyInB') {
+                next.set(dirPath, 'delete_b');
+              } else {
+                next.set(dirPath, 'delete_both');
+              }
+            }
+            return next;
+          }
+
+          return next;
+        }
+
+        // Case 2: Directory with descendant files -> Cascade to descendants
         if (actionType === 'skip') {
           for (const f of targetFiles) {
             next.delete(f.path);
           }
+          next.delete(dirPath);
           return next;
         }
 

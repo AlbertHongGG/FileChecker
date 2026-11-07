@@ -39,28 +39,41 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
 
   if (node.is_dir) {
     const descendants = node.descendantFiles || [];
+    const isPureEmpty = descendants.length === 0;
+
     if (!exists && existsOther) {
-      // Check if folder is ghost-transferred into this side
-      const eligible = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInB' : d.diffType === 'OnlyInA'));
-      const activeTransfer =
-        eligible.length > 0 &&
-        Boolean(actionMap) &&
-        eligible.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_b_to_a' : 'copy_a_to_b'));
-      isGhost = activeTransfer;
+      if (isPureEmpty) {
+        const selfAct = actionMap?.get(node.relative_path);
+        isGhost = selfAct === (isSideA ? 'copy_b_to_a' : 'copy_a_to_b');
+      } else {
+        // Check if folder is ghost-transferred into this side
+        const eligible = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInB' : d.diffType === 'OnlyInA'));
+        const activeTransfer =
+          eligible.length > 0 &&
+          Boolean(actionMap) &&
+          eligible.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_b_to_a' : 'copy_a_to_b'));
+        isGhost = activeTransfer;
+      }
     } else if (exists) {
-      const eligibleDel = descendants.filter((d) => d.diffType !== 'Identical');
-      isDeleted =
-        eligibleDel.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleDel.every((d) => {
-          const act = actionMap?.get(d.path);
-          return act === 'delete_both' || act === (isSideA ? 'delete_a' : 'delete_b');
-        });
-      const eligibleTrans = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInA' : d.diffType === 'OnlyInB'));
-      isTransferredOut =
-        eligibleTrans.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleTrans.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_a_to_b' : 'copy_b_to_a'));
+      if (isPureEmpty) {
+        const selfAct = actionMap?.get(node.relative_path);
+        isDeleted = selfAct === 'delete_both' || selfAct === (isSideA ? 'delete_a' : 'delete_b');
+        isTransferredOut = selfAct === (isSideA ? 'copy_a_to_b' : 'copy_b_to_a');
+      } else {
+        const eligibleDel = descendants.filter((d) => d.diffType !== 'Identical');
+        isDeleted =
+          eligibleDel.length > 0 &&
+          Boolean(actionMap) &&
+          eligibleDel.every((d) => {
+            const act = actionMap?.get(d.path);
+            return act === 'delete_both' || act === (isSideA ? 'delete_a' : 'delete_b');
+          });
+        const eligibleTrans = descendants.filter((d) => (isSideA ? d.diffType === 'OnlyInA' : d.diffType === 'OnlyInB'));
+        isTransferredOut =
+          eligibleTrans.length > 0 &&
+          Boolean(actionMap) &&
+          eligibleTrans.every((d) => actionMap?.get(d.path) === (isSideA ? 'copy_a_to_b' : 'copy_b_to_a'));
+      }
     }
   } else {
     isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
@@ -85,25 +98,22 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
         textDecoration: isDeleted ? 'line-through' : 'none',
       }}
     >
-      {/* Expander Arrow (only on side A, or blank placeholder) */}
-      {isSideA ? (
-        hasChildren ? (
-          <button
-            onClick={onToggleExpand}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-              color: 'var(--text-tertiary)',
-              display: 'flex',
-            }}
-          >
-            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-        ) : (
-          <span style={{ width: 14 }} />
-        )
+      {/* Expander Arrow on both Side A and Side B when the node exists on that side */}
+      {exists && hasChildren ? (
+        <button
+          onClick={onToggleExpand}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            color: 'var(--text-tertiary)',
+            display: 'flex',
+          }}
+          title={isExpanded ? 'Collapse Folder' : 'Expand Folder'}
+        >
+          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
       ) : (
         <span style={{ width: 14 }} />
       )}

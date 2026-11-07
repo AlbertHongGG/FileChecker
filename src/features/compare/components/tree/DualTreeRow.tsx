@@ -78,6 +78,7 @@ export const DualTreeRow: React.FC<DualTreeRowProps> = ({
         isExpanded={isExpanded}
         action={action}
         actionMap={actionMap}
+        onToggleExpand={onToggleExpand}
       />
     </div>
   );
