@@ -30,6 +30,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     pruneIgnored,
     setPruneIgnored,
     entries,
+    scanVersion,
     applySyncPatch,
     runCompare,
     cancelScan,
@@ -48,7 +49,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     isExecuting,
     syncProgress,
     execute,
-  } = useSyncPlanner(entries);
+  } = useSyncPlanner(entries, scanVersion);
 
   // 3. Tree hierarchy & filtering
   const {
@@ -56,7 +57,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     toggleExpand,
     onlyDiffs,
     setOnlyDiffs,
-  } = useTreeHierarchy(entries, actionMap);
+  } = useTreeHierarchy(entries, scanVersion);
 
   // 4. Virtual list rendering slice
   const {

@@ -8,6 +8,7 @@ pub enum SyncAction {
     CopyBtoA,
     DeleteA,
     DeleteB,
+    DeleteBoth,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

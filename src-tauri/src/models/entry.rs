@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileMetadata {
@@ -28,4 +29,11 @@ pub struct UnifiedEntry {
     pub diff_kind: DiffKind,
     pub meta_a: Option<FileMetadata>,
     pub meta_b: Option<FileMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnchorItem {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
 }

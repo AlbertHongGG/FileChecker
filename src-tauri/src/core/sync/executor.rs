@@ -20,6 +20,35 @@ impl SyncExecutor {
         Ok(path.to_path_buf())
     }
 
+    /// Attempts to clear read-only flag before deletion on Windows
+    fn safe_remove(path: &Path, rel_path: &str) -> AppResult<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+
+        // If file is read-only, remove read-only attribute so delete succeeds
+        if let Ok(meta) = fs::metadata(path) {
+            let mut permissions = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                let _ = fs::set_permissions(path, permissions);
+            }
+        }
+
+        if path.is_dir() {
+            fs::remove_dir_all(path).map_err(|e| AppError::SyncFailed {
+                path: rel_path.to_string(),
+                reason: format!("Failed to delete directory: {}", e),
+            })
+        } else {
+            fs::remove_file(path).map_err(|e| AppError::SyncFailed {
+                path: rel_path.to_string(),
+                reason: format!("Failed to delete file: {}", e),
+            })
+        }
+    }
+
     pub fn execute<F>(
         dir_a: &Path,
         dir_b: &Path,
@@ -54,7 +83,7 @@ impl SyncExecutor {
                             if let Some(parent) = path_b.parent() {
                                 fs::create_dir_all(parent).map_err(|e| AppError::SyncFailed {
                                     path: task.relative_path.clone(),
-                                    reason: format!("Failed to create parent directory: {}", e),
+                                    reason: format!("Failed to create parent directory for B: {}", e),
                                 })?;
                             }
                             fs::copy(&path_a, &path_b).map_err(|e| AppError::SyncFailed {
@@ -75,7 +104,7 @@ impl SyncExecutor {
                             if let Some(parent) = path_a.parent() {
                                 fs::create_dir_all(parent).map_err(|e| AppError::SyncFailed {
                                     path: task.relative_path.clone(),
-                                    reason: format!("Failed to create parent directory: {}", e),
+                                    reason: format!("Failed to create parent directory for A: {}", e),
                                 })?;
                             }
                             fs::copy(&path_b, &path_a).map_err(|e| AppError::SyncFailed {
@@ -86,34 +115,14 @@ impl SyncExecutor {
                     }
                 }
                 SyncAction::DeleteA => {
-                    if path_a.exists() {
-                        if path_a.is_dir() {
-                            fs::remove_dir_all(&path_a).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to delete directory in A: {}", e),
-                            })?;
-                        } else {
-                            fs::remove_file(&path_a).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to delete file in A: {}", e),
-                            })?;
-                        }
-                    }
+                    Self::safe_remove(&path_a, &task.relative_path)?;
                 }
                 SyncAction::DeleteB => {
-                    if path_b.exists() {
-                        if path_b.is_dir() {
-                            fs::remove_dir_all(&path_b).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to delete directory in B: {}", e),
-                            })?;
-                        } else {
-                            fs::remove_file(&path_b).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to delete file in B: {}", e),
-                            })?;
-                        }
-                    }
+                    Self::safe_remove(&path_b, &task.relative_path)?;
+                }
+                SyncAction::DeleteBoth => {
+                    Self::safe_remove(&path_a, &task.relative_path)?;
+                    Self::safe_remove(&path_b, &task.relative_path)?;
                 }
                 SyncAction::Skip => {}
             }

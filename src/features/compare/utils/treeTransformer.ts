@@ -1,4 +1,70 @@
-import { UnifiedEntry, TreeNode, PlannedAction, FlattenedRow } from '../../../types';
+import { UnifiedEntry, TreeNode, FlattenedRow } from '../../../types';
+
+interface SubtreeSummary {
+  hasA: boolean;
+  hasB: boolean;
+  hasDiff: boolean;
+  childCount: number;
+}
+
+function propagateDirectoryState(node: TreeNode): SubtreeSummary {
+  if (!node.is_dir) {
+    const hasA = Boolean(node.meta_a);
+    const hasB = Boolean(node.meta_b);
+    const hasDiff = node.diff_kind.type !== 'Identical';
+    return { hasA, hasB, hasDiff, childCount: 1 };
+  }
+
+  let hasA = Boolean(node.meta_a);
+  let hasB = Boolean(node.meta_b);
+  let hasDiff = false;
+  let childCount = 0;
+
+  if (node.children && node.children.length > 0) {
+    for (const child of node.children) {
+      const summary = propagateDirectoryState(child);
+      if (summary.hasA) hasA = true;
+      if (summary.hasB) hasB = true;
+      if (summary.hasDiff) hasDiff = true;
+      childCount += summary.childCount;
+    }
+  }
+
+  // Update directory physical presence based on descendants
+  if (hasA && !node.meta_a) {
+    node.meta_a = { size: 0, modified_timestamp: 0, is_dir: true };
+  } else if (!hasA && node.meta_a) {
+    node.meta_a = null;
+  }
+
+  if (hasB && !node.meta_b) {
+    node.meta_b = { size: 0, modified_timestamp: 0, is_dir: true };
+  } else if (!hasB && node.meta_b) {
+    node.meta_b = null;
+  }
+
+  // Derive directory diff_kind
+  if (hasA && !hasB) {
+    node.diff_kind = { type: 'OnlyInA' };
+  } else if (!hasA && hasB) {
+    node.diff_kind = { type: 'OnlyInB' };
+  } else if (hasA && hasB) {
+    if (hasDiff) {
+      node.diff_kind = { type: 'Modified' };
+    } else {
+      node.diff_kind = { type: 'Identical' };
+    }
+  } else {
+    node.diff_kind = { type: 'Identical' };
+  }
+
+  return {
+    hasA,
+    hasB,
+    hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
+    childCount,
+  };
+}
 
 export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
   const rootMap = new Map<string, TreeNode>();
@@ -46,23 +112,8 @@ export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
     }
   }
 
-  // Bubble up diff statuses to folders
-  function propagateDiffs(node: TreeNode): boolean {
-    let hasChildDiff = false;
-    if (node.children && node.children.length > 0) {
-      for (const child of node.children) {
-        if (propagateDiffs(child)) {
-          hasChildDiff = true;
-        }
-      }
-    }
-    if (node.is_dir && hasChildDiff && node.diff_kind.type === 'Identical') {
-      node.diff_kind = { type: 'Modified' };
-    }
-    return node.diff_kind.type !== 'Identical' || hasChildDiff;
-  }
-
-  roots.forEach(propagateDiffs);
+  // Bottom-up propagation of directory presence and difference status
+  roots.forEach(propagateDirectoryState);
 
   // Sort: directories first, then natural alphabetical
   function sortNodes(nodes: TreeNode[]) {
@@ -89,44 +140,33 @@ export function buildTree(entries: UnifiedEntry[]): TreeNode[] {
 export function flattenTree(
   nodes: TreeNode[],
   expandedPaths: Set<string>,
-  onlyDiffs: boolean,
-  actionMap: Map<string, PlannedAction>,
-  depth = 0
+  onlyDiffs: boolean
 ): FlattenedRow[] {
   const result: FlattenedRow[] = [];
 
-  for (const node of nodes) {
-    const hasDiff =
-      node.diff_kind.type !== 'Identical' ||
-      (actionMap.get(node.relative_path) &&
-        actionMap.get(node.relative_path) !== 'skip');
+  function traverse(currentNodes: TreeNode[], depth: number) {
+    for (const node of currentNodes) {
+      // In onlyDiffs mode, exclude nodes (both files and folders) that are already identical
+      if (onlyDiffs && node.diff_kind.type === 'Identical') {
+        continue;
+      }
 
-    if (onlyDiffs && !hasDiff && !node.is_dir) {
-      continue;
-    }
+      const hasChildren = Boolean(node.children && node.children.length > 0);
+      const isExpanded = expandedPaths.has(node.relative_path);
 
-    const hasChildren = Boolean(node.children && node.children.length > 0);
-    const isExpanded = expandedPaths.has(node.relative_path);
+      result.push({
+        node,
+        depth,
+        hasChildren,
+        isExpanded,
+      });
 
-    result.push({
-      node,
-      depth,
-      hasChildren,
-      isExpanded,
-    });
-
-    if (hasChildren && isExpanded && node.children) {
-      result.push(
-        ...flattenTree(
-          node.children,
-          expandedPaths,
-          onlyDiffs,
-          actionMap,
-          depth + 1
-        )
-      );
+      if (hasChildren && isExpanded && node.children) {
+        traverse(node.children, depth + 1);
+      }
     }
   }
 
+  traverse(nodes, 0);
   return result;
 }

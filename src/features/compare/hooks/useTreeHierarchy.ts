@@ -1,16 +1,20 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { UnifiedEntry, PlannedAction, FlattenedRow } from '../../../types';
+import { UnifiedEntry, FlattenedRow } from '../../../types';
 import { buildTree, flattenTree } from '../utils/treeTransformer';
 
 export function useTreeHierarchy(
   entries: UnifiedEntry[],
-  actionMap: Map<string, PlannedAction>
+  scanVersion: number
 ) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [onlyDiffs, setOnlyDiffs] = useState(true);
 
-  // Auto-expand paths with differences when entries update
+  // Auto-expand paths with differences ONLY when a fresh scan completes (scanVersion changes)
   useEffect(() => {
+    if (entries.length === 0) {
+      setExpandedPaths(new Set());
+      return;
+    }
     const autoExpand = new Set<string>();
     for (const e of entries) {
       if (e.diff_kind.type !== 'Identical') {
@@ -23,7 +27,7 @@ export function useTreeHierarchy(
       }
     }
     setExpandedPaths(autoExpand);
-  }, [entries]);
+  }, [scanVersion]);
 
   const toggleExpand = useCallback((path: string) => {
     setExpandedPaths((prev) => {
@@ -40,8 +44,8 @@ export function useTreeHierarchy(
   const tree = useMemo(() => buildTree(entries), [entries]);
 
   const rows: FlattenedRow[] = useMemo(
-    () => flattenTree(tree, expandedPaths, onlyDiffs, actionMap),
-    [tree, expandedPaths, onlyDiffs, actionMap]
+    () => flattenTree(tree, expandedPaths, onlyDiffs),
+    [tree, expandedPaths, onlyDiffs]
   );
 
   return {

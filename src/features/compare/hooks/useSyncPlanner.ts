@@ -9,7 +9,7 @@ import {
 } from '../../../types';
 import { useNotification } from '../../../contexts/NotificationContext';
 
-export function useSyncPlanner(entries: UnifiedEntry[]) {
+export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
   const [actionMap, setActionMap] = useState<Map<string, PlannedAction>>(
     new Map()
   );
@@ -20,10 +20,10 @@ export function useSyncPlanner(entries: UnifiedEntry[]) {
 
   const { addNotification } = useNotification();
 
-  // Reset action map when entries change
+  // Reset action map when a fresh scan completes
   useEffect(() => {
     setActionMap(new Map());
-  }, [entries]);
+  }, [scanVersion]);
 
   // Listen to sync-progress event
   useEffect(() => {
