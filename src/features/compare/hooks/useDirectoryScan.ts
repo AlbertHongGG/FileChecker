@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TauriClient } from '../../../services/tauriClient';
 import { EventListenerService } from '../../../services/eventListener';
-import { UnifiedEntry, ScanProgressPayload } from '../../../types';
+import { UnifiedEntry, ScanProgressPayload, SyncTask, PlannedAction } from '../../../types';
 import { useNotification } from '../../../contexts/NotificationContext';
 
 export function useDirectoryScan() {
@@ -104,6 +104,76 @@ export function useDirectoryScan() {
     }
   }, [dirA, dirB, runCompare]);
 
+  const applySyncPatch = useCallback((tasks: SyncTask[]) => {
+    if (tasks.length === 0) return;
+    const taskMap = new Map<string, PlannedAction>();
+    for (const t of tasks) {
+      if (t.action !== 'skip') {
+        taskMap.set(t.relative_path, t.action);
+      }
+    }
+
+    setEntries((prevEntries) => {
+      const nextEntries: UnifiedEntry[] = [];
+      for (const entry of prevEntries) {
+        const action = taskMap.get(entry.relative_path);
+        if (!action) {
+          nextEntries.push(entry);
+          continue;
+        }
+
+        switch (action) {
+          case 'copy_a_to_b': {
+            const metaA = entry.meta_a;
+            nextEntries.push({
+              ...entry,
+              diff_kind: { type: 'Identical' },
+              meta_b: metaA ? { ...metaA } : entry.meta_b,
+            });
+            break;
+          }
+          case 'copy_b_to_a': {
+            const metaB = entry.meta_b;
+            nextEntries.push({
+              ...entry,
+              diff_kind: { type: 'Identical' },
+              meta_a: metaB ? { ...metaB } : entry.meta_a,
+            });
+            break;
+          }
+          case 'delete_a': {
+            if (entry.diff_kind.type !== 'OnlyInA') {
+              nextEntries.push({
+                ...entry,
+                diff_kind: { type: 'OnlyInB' },
+                meta_a: null,
+              });
+            }
+            break;
+          }
+          case 'delete_b': {
+            if (entry.diff_kind.type !== 'OnlyInB') {
+              nextEntries.push({
+                ...entry,
+                diff_kind: { type: 'OnlyInA' },
+                meta_b: null,
+              });
+            }
+            break;
+          }
+          case 'delete_both': {
+            // Completely removed from both sides
+            break;
+          }
+          default:
+            nextEntries.push(entry);
+            break;
+        }
+      }
+      return nextEntries;
+    });
+  }, []);
+
   return {
     dirA,
     dirB,
@@ -117,6 +187,7 @@ export function useDirectoryScan() {
     setPruneIgnored,
     entries,
     setEntries,
+    applySyncPatch,
     runCompare,
     cancelScan,
   };

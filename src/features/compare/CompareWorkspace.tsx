@@ -30,6 +30,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
     pruneIgnored,
     setPruneIgnored,
     entries,
+    applySyncPatch,
     runCompare,
     cancelScan,
   } = useDirectoryScan();
@@ -76,8 +77,8 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
 
   const handleExecute = useCallback(() => {
     if (!dirA || !dirB) return;
-    execute(dirA, dirB, runCompare);
-  }, [dirA, dirB, execute, runCompare]);
+    execute(dirA, dirB, applySyncPatch);
+  }, [dirA, dirB, execute, applySyncPatch]);
 
   const dirNameA = dirA ? dirA.split(/[\\/]/).filter(Boolean).pop() || dirA : '';
   const dirNameB = dirB ? dirB.split(/[\\/]/).filter(Boolean).pop() || dirB : '';

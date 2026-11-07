@@ -31,7 +31,10 @@ export const TreeSideNode: React.FC<TreeSideNodeProps> = ({
 
   // Transfer & Ghost states
   const isGhost = !exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
-  const isDeleted = exists && (isSideA ? action === 'delete_a' : action === 'delete_b');
+  const isDeleted =
+    exists &&
+    (action === 'delete_both' ||
+      (isSideA ? action === 'delete_a' : action === 'delete_b'));
   const isTransferredOut = exists && (isSideA ? action === 'copy_a_to_b' : action === 'copy_b_to_a');
   const isOverwritten = exists && (isSideA ? action === 'copy_b_to_a' : action === 'copy_a_to_b');
 

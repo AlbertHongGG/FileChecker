@@ -132,7 +132,11 @@ export function useSyncPlanner(entries: UnifiedEntry[]) {
   }, [actionMap]);
 
   const execute = useCallback(
-    async (dirA: string, dirB: string, onDone: () => Promise<void>) => {
+    async (
+      dirA: string,
+      dirB: string,
+      onSuccess?: (tasks: SyncTask[]) => void
+    ) => {
       if (!dirA || !dirB || pendingActionsCount === 0) return;
       setIsExecuting(true);
       setSyncProgress({
@@ -156,7 +160,9 @@ export function useSyncPlanner(entries: UnifiedEntry[]) {
           `Processed ${count} items`
         );
         setActionMap(new Map());
-        await onDone();
+        if (onSuccess) {
+          onSuccess(tasks);
+        }
       } catch (err) {
         console.error('Execution Failed:', err);
         addNotification('error', 'Execution Failed', String(err));

@@ -3,7 +3,8 @@ export type PlannedAction =
   | 'copy_a_to_b'
   | 'copy_b_to_a'
   | 'delete_a'
-  | 'delete_b';
+  | 'delete_b'
+  | 'delete_both';
 
 export interface SyncTask {
   relative_path: string;

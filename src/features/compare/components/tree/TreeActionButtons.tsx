@@ -35,69 +35,103 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
     return <Check size={12} style={{ color: 'var(--status-success)', opacity: 0.6 }} />;
   }
 
+  // 1. Arrow Right (A ➔ B) Configuration
+  const canCopyAtoB = existsInA;
+  const isCopyAtoBActive = action === 'copy_a_to_b';
+  const tooltipAtoB = !canCopyAtoB
+    ? 'File does not exist in Directory A'
+    : existsInB
+    ? node.diff_kind.type === 'Modified' && node.diff_kind.a_newer
+      ? 'Overwrite B (A is newer)'
+      : 'Overwrite B'
+    : 'Copy to Directory B';
+
+  // 2. Arrow Left (B ⬅ A) Configuration
+  const canCopyBtoA = existsInB;
+  const isCopyBtoAActive = action === 'copy_b_to_a';
+  const tooltipBtoA = !canCopyBtoA
+    ? 'File does not exist in Directory B'
+    : existsInA
+    ? node.diff_kind.type === 'Modified' && node.diff_kind.b_newer
+      ? 'Overwrite A (B is newer)'
+      : 'Overwrite A'
+    : 'Copy to Directory A';
+
+  // 3. Delete Configuration
+  const isBoth = existsInA && existsInB;
+  const targetDeleteAction: PlannedAction = isBoth
+    ? 'delete_both'
+    : existsInA
+    ? 'delete_a'
+    : 'delete_b';
+  const isDeleteActive = action === targetDeleteAction;
+  const tooltipDelete = isBoth
+    ? 'Delete from both A and B'
+    : existsInA
+    ? 'Delete from Directory A'
+    : 'Delete from Directory B';
+
   const handleDelete = () => {
-    if (existsInA && !existsInB) {
-      onSetAction(action === 'delete_a' ? 'skip' : 'delete_a');
-    } else if (existsInB && !existsInA) {
-      onSetAction(action === 'delete_b' ? 'skip' : 'delete_b');
-    } else {
-      onSetAction(action === 'delete_b' ? 'skip' : 'delete_b');
-    }
+    onSetAction(isDeleteActive ? 'skip' : targetDeleteAction);
   };
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
-      <Tooltip content="Copy A ➔ B" position="top">
+      {/* Copy A to B Button */}
+      <Tooltip content={tooltipAtoB} position="top">
         <button
           className="icon-btn"
-          onClick={() => onSetAction(action === 'copy_a_to_b' ? 'skip' : 'copy_a_to_b')}
+          disabled={!canCopyAtoB}
+          onClick={() => canCopyAtoB && onSetAction(isCopyAtoBActive ? 'skip' : 'copy_a_to_b')}
           style={{
             width: '24px',
             height: '24px',
-            background: action === 'copy_a_to_b' ? 'var(--status-info)' : 'transparent',
-            color: action === 'copy_a_to_b' ? '#ffffff' : 'var(--text-secondary)',
+            opacity: canCopyAtoB ? 1 : 0.25,
+            cursor: canCopyAtoB ? 'pointer' : 'not-allowed',
+            background: isCopyAtoBActive ? 'var(--status-info)' : 'transparent',
+            color: isCopyAtoBActive ? '#ffffff' : 'var(--text-secondary)',
           }}
         >
           <ArrowRight size={12} />
         </button>
       </Tooltip>
 
-      <Tooltip content="Copy B ⬅ A" position="top">
+      {/* Copy B to A Button */}
+      <Tooltip content={tooltipBtoA} position="top">
         <button
           className="icon-btn"
-          onClick={() => onSetAction(action === 'copy_b_to_a' ? 'skip' : 'copy_b_to_a')}
+          disabled={!canCopyBtoA}
+          onClick={() => canCopyBtoA && onSetAction(isCopyBtoAActive ? 'skip' : 'copy_b_to_a')}
           style={{
             width: '24px',
             height: '24px',
-            background: action === 'copy_b_to_a' ? 'var(--status-info)' : 'transparent',
-            color: action === 'copy_b_to_a' ? '#ffffff' : 'var(--text-secondary)',
+            opacity: canCopyBtoA ? 1 : 0.25,
+            cursor: canCopyBtoA ? 'pointer' : 'not-allowed',
+            background: isCopyBtoAActive ? 'var(--status-info)' : 'transparent',
+            color: isCopyBtoAActive ? '#ffffff' : 'var(--text-secondary)',
           }}
         >
           <ArrowLeftIcon size={12} />
         </button>
       </Tooltip>
 
-      <Tooltip content="Delete" position="top">
+      {/* Delete Button */}
+      <Tooltip content={tooltipDelete} position="top">
         <button
           className="icon-btn danger"
           onClick={handleDelete}
           style={{
             width: '24px',
             height: '24px',
-            background:
-              action === 'delete_a' || action === 'delete_b'
-                ? 'var(--status-danger)'
-                : 'transparent',
-            color:
-              action === 'delete_a' || action === 'delete_b'
-                ? '#ffffff'
-                : 'var(--text-secondary)',
+            background: isDeleteActive ? 'var(--status-danger)' : 'transparent',
+            color: isDeleteActive ? '#ffffff' : 'var(--text-secondary)',
           }}
         >
           <Trash2 size={12} />
         </button>
       </Tooltip>
 
+      {/* Skip Button */}
       <Tooltip content="Skip" position="top">
         <button
           className="icon-btn"
@@ -112,6 +146,7 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
         </button>
       </Tooltip>
 
+      {/* Inspect Diff Button for Modified Files */}
       {node.diff_kind.type === 'Modified' && (
         <Tooltip content="Inspect Diff" position="top">
           <button

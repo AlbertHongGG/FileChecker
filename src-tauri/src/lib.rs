@@ -847,6 +847,22 @@ async fn execute_sync(
                         }
                     }
                 }
+                "delete_both" => {
+                    if path_a.exists() {
+                        if path_a.is_dir() {
+                            let _ = fs::remove_dir_all(&path_a);
+                        } else {
+                            let _ = fs::remove_file(&path_a);
+                        }
+                    }
+                    if path_b.exists() {
+                        if path_b.is_dir() {
+                            let _ = fs::remove_dir_all(&path_b);
+                        } else {
+                            let _ = fs::remove_file(&path_b);
+                        }
+                    }
+                }
                 _ => {}
             }
 
