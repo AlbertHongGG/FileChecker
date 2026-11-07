@@ -3,108 +3,64 @@ import { Folder, FolderPlus, FolderSync, ExternalLink } from 'lucide-react';
 import { Tooltip } from '../../../components/common/Tooltip';
 import { TauriClient } from '../../../services/tauriClient';
 
-interface EmptyPaneSlotProps {
-  label: string;
-  onClick: () => void;
+interface PaneHeaderCellProps {
+  side: 'A' | 'B';
+  dirPath: string | null;
+  isDisabled: boolean;
+  onSelect: () => void;
 }
 
-export const EmptyPaneSlot: React.FC<EmptyPaneSlotProps> = ({ label, onClick }) => {
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        flex: 1,
-        borderRadius: 'var(--radius-lg)',
-        border: '1.5px dashed var(--border-strong)',
-        background: 'var(--bg-surface)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        gap: '8px',
-        transition: 'all 0.2s ease',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = 'var(--status-info)';
-        e.currentTarget.style.background = 'var(--bg-surface-hover)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = 'var(--border-strong)';
-        e.currentTarget.style.background = 'var(--bg-surface)';
-      }}
-    >
-      <FolderPlus size={36} strokeWidth={1.5} style={{ color: 'var(--text-secondary)' }} />
-      <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
-        {label}
-      </span>
-    </div>
-  );
-};
-
-interface SelectedPaneHeaderProps {
-  label: string;
-  dirPath: string;
-  onReselect: () => void;
-}
-
-export const SelectedPaneHeader: React.FC<SelectedPaneHeaderProps> = ({
-  label,
+export const PaneHeaderCell: React.FC<PaneHeaderCellProps> = ({
+  side,
   dirPath,
-  onReselect,
+  isDisabled,
+  onSelect,
 }) => {
-  const folderName = dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 12px',
-        background: 'var(--bg-surface)',
-        borderRadius: 'var(--radius-sm)',
-        border: '1px solid var(--border-subtle)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-        <Folder size={16} style={{ color: 'var(--status-info)', flexShrink: 0 }} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            {folderName}
-          </div>
-          <div
-            style={{
-              fontSize: '11px',
-              color: 'var(--text-secondary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {dirPath}
-          </div>
-        </div>
-      </div>
-      <Tooltip content={`Change ${label}`} position="bottom">
-        <button className="icon-btn" onClick={onReselect}>
-          <FolderSync size={14} />
+  const label = `Directory ${side}`;
+
+  if (!dirPath) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '6px 12px',
+          height: '36px',
+          boxSizing: 'border-box',
+        }}
+      >
+        <button
+          onClick={onSelect}
+          disabled={isDisabled}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-tertiary)',
+            cursor: isDisabled ? 'not-allowed' : 'pointer',
+            fontSize: '12px',
+            padding: 0,
+            transition: 'color 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            if (!isDisabled) e.currentTarget.style.color = 'var(--status-info)';
+          }}
+          onMouseLeave={(e) => {
+            if (!isDisabled) e.currentTarget.style.color = 'var(--text-tertiary)';
+          }}
+        >
+          <FolderPlus size={14} style={{ opacity: 0.8 }} />
+          <span>Select {label}...</span>
         </button>
-      </Tooltip>
-    </div>
-  );
-};
+      </div>
+    );
+  }
 
-interface ActiveHeaderBarProps {
-  label: string;
-  dirPath: string;
-  onReselect: () => void;
-}
-
-export const ActiveHeaderBar: React.FC<ActiveHeaderBarProps> = ({
-  dirPath,
-  onReselect,
-}) => {
   const folderName = dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath;
+
   return (
     <div
       style={{
@@ -112,40 +68,116 @@ export const ActiveHeaderBar: React.FC<ActiveHeaderBarProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '6px 12px',
+        height: '36px',
+        boxSizing: 'border-box',
         minWidth: 0,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
         <Folder size={14} style={{ color: 'var(--status-info)', flexShrink: 0 }} />
-        <span
-          style={{
-            fontSize: '12px',
-            fontWeight: 600,
-            color: 'var(--text-primary)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          title={dirPath}
-        >
-          {folderName}
-        </span>
+        <Tooltip content={dirPath} position="bottom">
+          <span
+            style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              cursor: 'default',
+            }}
+          >
+            {folderName}
+          </span>
+        </Tooltip>
       </div>
+
       <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
         <Tooltip content="Open in Explorer" position="bottom">
           <button
             className="icon-btn"
+            disabled={isDisabled}
             onClick={() => TauriClient.revealInExplorer(dirPath)}
           >
             <ExternalLink size={12} />
           </button>
         </Tooltip>
-        <Tooltip content="Change Directory" position="bottom">
-          <button className="icon-btn" onClick={onReselect}>
+        <Tooltip content={`Change ${label}`} position="bottom">
+          <button className="icon-btn" disabled={isDisabled} onClick={onSelect}>
             <FolderSync size={12} />
           </button>
         </Tooltip>
       </div>
+    </div>
+  );
+};
+
+interface WorkspaceHeaderRowProps {
+  dirA: string | null;
+  dirB: string | null;
+  isLoading: boolean;
+  isExecuting: boolean;
+  onSelectDirA: () => void;
+  onSelectDirB: () => void;
+}
+
+export const WorkspaceHeaderRow: React.FC<WorkspaceHeaderRowProps> = ({
+  dirA,
+  dirB,
+  isLoading,
+  isExecuting,
+  onSelectDirA,
+  onSelectDirB,
+}) => {
+  const isActionDisabled = isLoading || isExecuting;
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 140px 1fr',
+        borderBottom: '1px solid var(--border-subtle)',
+        background: 'var(--bg-surface)',
+        alignItems: 'center',
+        flexShrink: 0,
+        height: '36px',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Directory A Header Cell */}
+      <PaneHeaderCell
+        side="A"
+        dirPath={dirA}
+        isDisabled={isActionDisabled}
+        onSelect={onSelectDirA}
+      />
+
+      {/* Center Action Column Header */}
+      <div
+        style={{
+          textAlign: 'center',
+          fontSize: '11px',
+          fontWeight: 600,
+          color: 'var(--text-tertiary)',
+          borderLeft: '1px solid var(--border-subtle)',
+          borderRight: '1px solid var(--border-subtle)',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          userSelect: 'none',
+        }}
+      >
+        Action
+      </div>
+
+      {/* Directory B Header Cell */}
+      <PaneHeaderCell
+        side="B"
+        dirPath={dirB}
+        isDisabled={isActionDisabled}
+        onSelect={onSelectDirB}
+      />
     </div>
   );
 };
