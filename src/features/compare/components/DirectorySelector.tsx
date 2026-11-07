@@ -115,6 +115,7 @@ export const PaneHeaderCell: React.FC<PaneHeaderCellProps> = ({
 interface WorkspaceHeaderRowProps {
   dirA: string | null;
   dirB: string | null;
+  showActionColumn: boolean;
   isLoading: boolean;
   isExecuting: boolean;
   onSelectDirA: () => void;
@@ -124,6 +125,7 @@ interface WorkspaceHeaderRowProps {
 export const WorkspaceHeaderRow: React.FC<WorkspaceHeaderRowProps> = ({
   dirA,
   dirB,
+  showActionColumn,
   isLoading,
   isExecuting,
   onSelectDirA,
@@ -135,7 +137,7 @@ export const WorkspaceHeaderRow: React.FC<WorkspaceHeaderRowProps> = ({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 140px 1fr',
+        gridTemplateColumns: showActionColumn ? '1fr 140px 1fr' : '1fr 1fr',
         borderBottom: '1px solid var(--border-subtle)',
         background: 'var(--bg-surface)',
         alignItems: 'center',
@@ -145,39 +147,56 @@ export const WorkspaceHeaderRow: React.FC<WorkspaceHeaderRowProps> = ({
       }}
     >
       {/* Directory A Header Cell */}
-      <PaneHeaderCell
-        side="A"
-        dirPath={dirA}
-        isDisabled={isActionDisabled}
-        onSelect={onSelectDirA}
-      />
-
-      {/* Center Action Column Header */}
       <div
         style={{
-          textAlign: 'center',
-          fontSize: '11px',
-          fontWeight: 600,
-          color: 'var(--text-tertiary)',
-          borderLeft: '1px solid var(--border-subtle)',
-          borderRight: '1px solid var(--border-subtle)',
+          borderRight: !showActionColumn ? '1px solid var(--border-subtle)' : 'none',
           height: '100%',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          userSelect: 'none',
         }}
       >
-        Action
+        <div style={{ width: '100%' }}>
+          <PaneHeaderCell
+            side="A"
+            dirPath={dirA}
+            isDisabled={isActionDisabled}
+            onSelect={onSelectDirA}
+          />
+        </div>
       </div>
 
+      {/* Center Action Column Header (Only rendered when showActionColumn is true) */}
+      {showActionColumn && (
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: '11px',
+            fontWeight: 600,
+            color: 'var(--text-tertiary)',
+            borderLeft: '1px solid var(--border-subtle)',
+            borderRight: '1px solid var(--border-subtle)',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            userSelect: 'none',
+          }}
+        >
+          Action
+        </div>
+      )}
+
       {/* Directory B Header Cell */}
-      <PaneHeaderCell
-        side="B"
-        dirPath={dirB}
-        isDisabled={isActionDisabled}
-        onSelect={onSelectDirB}
-      />
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center' }}>
+        <div style={{ width: '100%' }}>
+          <PaneHeaderCell
+            side="B"
+            dirPath={dirB}
+            isDisabled={isActionDisabled}
+            onSelect={onSelectDirB}
+          />
+        </div>
+      </div>
     </div>
   );
 };

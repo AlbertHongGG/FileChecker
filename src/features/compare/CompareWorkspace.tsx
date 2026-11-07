@@ -88,7 +88,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   const dirNameA = dirA ? dirA.split(/[\\/]/).filter(Boolean).pop() || dirA : '';
   const dirNameB = dirB ? dirB.split(/[\\/]/).filter(Boolean).pop() || dirB : '';
 
-  // Whether tree is ready to be rendered vs showing split pane stage
+  // Only expand to 3-column with Action when comparison is ready and tree can be rendered
   const isTreeReady = Boolean(dirA && dirB && (!isLoading || entries.length > 0));
 
   return (
@@ -124,17 +124,18 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
         onCancelScan={cancelScan}
       />
 
-      {/* 2. Persistent 3-Column Header (1fr | 140px | 1fr) */}
+      {/* 2. Dynamic Header: 2-Column during Selection/Scan, expands to 3-Column on Tree Ready */}
       <WorkspaceHeaderRow
         dirA={dirA}
         dirB={dirB}
+        showActionColumn={isTreeReady}
         isLoading={isLoading}
         isExecuting={isExecuting}
         onSelectDirA={selectDirA}
         onSelectDirB={selectDirB}
       />
 
-      {/* 3. Main Stage Area: Seamlessly transitions between In-Pane Stage and Dual-Tree Virtual List */}
+      {/* 3. Main Stage Area: 2-Column SplitPaneStage vs 3-Column DualTreeVirtualList */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {!isTreeReady ? (
           <SplitPaneStage
@@ -144,7 +145,6 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
             scanProgress={scanProgress}
             onSelectDirA={selectDirA}
             onSelectDirB={selectDirB}
-            onCancelScan={cancelScan}
           />
         ) : (
           <DualTreeVirtualList

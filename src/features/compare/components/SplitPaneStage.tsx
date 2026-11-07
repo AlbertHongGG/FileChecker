@@ -2,11 +2,8 @@ import React from 'react';
 import {
   FolderPlus,
   FolderCheck,
-  FolderSync,
-  Loader2,
   HardDrive,
   Cpu,
-  X,
 } from 'lucide-react';
 import { ScanProgressPayload } from '../../../types';
 
@@ -90,7 +87,7 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
     );
   }
 
-  // State 3: Scanning in progress
+  // State 2: Scanning in progress
   if (isLoading) {
     const percent =
       metrics && metrics.total > 0
@@ -200,7 +197,7 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
     );
   }
 
-  // State 2: Mounted (Selected & Waiting for counterpart)
+  // State 3: Mounted & Ready (Selected, waiting for counterpart)
   const folderName = dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath;
 
   return (
@@ -266,25 +263,6 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
         <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--status-success)' }} />
         <span>Mounted & Ready</span>
       </div>
-
-      <button
-        onClick={onSelect}
-        className="icon-btn"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '4px 10px',
-          borderRadius: '6px',
-          border: '1px solid var(--border-subtle)',
-          fontSize: '11px',
-          color: 'var(--text-secondary)',
-          marginTop: '6px',
-        }}
-      >
-        <FolderSync size={12} />
-        <span>Change</span>
-      </button>
     </div>
   );
 };
@@ -296,7 +274,6 @@ interface SplitPaneStageProps {
   scanProgress: ScanProgressPayload | null;
   onSelectDirA: () => void;
   onSelectDirB: () => void;
-  onCancelScan?: () => void;
 }
 
 export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
@@ -306,7 +283,6 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
   scanProgress,
   onSelectDirA,
   onSelectDirB,
-  onCancelScan,
 }) => {
   const metricsA: SideScanMetrics | null = scanProgress
     ? {
@@ -332,14 +308,21 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 140px 1fr',
+        gridTemplateColumns: '1fr 1fr',
         flex: 1,
         overflow: 'hidden',
         background: 'var(--bg-base)',
       }}
     >
       {/* Left Column: Side A Status */}
-      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          borderRight: '1px solid var(--border-subtle)',
+        }}
+      >
         <PaneStatusCard
           side="A"
           dirPath={dirA}
@@ -347,59 +330,6 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
           metrics={metricsA}
           onSelect={onSelectDirA}
         />
-      </div>
-
-      {/* Middle Column: Central Action Axis */}
-      <div
-        style={{
-          borderLeft: '1px solid var(--border-subtle)',
-          borderRight: '1px solid var(--border-subtle)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '12px',
-          userSelect: 'none',
-        }}
-      >
-        {isLoading ? (
-          <>
-            <Loader2
-              size={20}
-              className="animate-spin"
-              style={{ color: 'var(--status-info)' }}
-            />
-            {onCancelScan && (
-              <button
-                className="icon-btn"
-                onClick={onCancelScan}
-                title="Cancel Scan"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  color: 'var(--status-danger)',
-                  fontSize: '11px',
-                  padding: '3px 8px',
-                  borderRadius: '4px',
-                  border: '1px solid var(--status-danger-light)',
-                  background: 'var(--bg-surface)',
-                }}
-              >
-                <X size={12} />
-                <span>Cancel</span>
-              </button>
-            )}
-          </>
-        ) : (
-          <div
-            style={{
-              width: '1px',
-              height: '40px',
-              background: 'var(--border-subtle)',
-            }}
-          />
-        )}
       </div>
 
       {/* Right Column: Side B Status */}
