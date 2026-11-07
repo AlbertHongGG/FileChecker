@@ -32,3 +32,6 @@ features = [
     "Win32_System_IO",
     "Win32_Security",
 ]
+
+[profile.dev]
+opt-level = 2

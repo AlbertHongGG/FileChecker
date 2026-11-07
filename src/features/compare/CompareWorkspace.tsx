@@ -90,7 +90,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
   const dirNameB = dirB ? dirB.split(/[\\/]/).filter(Boolean).pop() || dirB : '';
 
   // Only expand to 3-column with Action when comparison is ready and tree can be rendered
-  const isTreeReady = Boolean(dirA && dirB && (!isLoading || entries.length > 0));
+  const isTreeReady = Boolean(dirA && dirB && !isLoading && entries.length > 0);
 
   return (
     <div

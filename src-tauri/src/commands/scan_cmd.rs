@@ -1,5 +1,5 @@
 use crate::core::diff::DiffComparator;
-use crate::core::scanner::mft_engine::NtfsMftEngine;
+use crate::core::scanner::ntfs::NtfsMftEngine;
 use crate::core::scanner::win32_engine::Win32LargeFetchEngine;
 use crate::core::scanner::{ScanEngine, ScanObserver, ScanPolicy};
 use crate::error::AppError;
@@ -20,6 +20,7 @@ pub async fn compare_directories(
     session: State<'_, Arc<SessionManager>>,
 ) -> Result<Vec<UnifiedEntry>, AppError> {
     let cancel_token = session.new_token();
+    let mft_store = session.mft_store();
     let win = window.clone();
 
     tokio::task::spawn_blocking(move || {
@@ -45,29 +46,20 @@ pub async fn compare_directories(
         let engine_kind_a = cap_a.recommended_engine();
         let engine_kind_b = cap_b.recommended_engine();
 
-        let engine_str_a = match engine_kind_a {
-            EngineKind::NtfsMft => "⚡ NTFS MFT",
-            EngineKind::Win32LargeFetchSsd => "SSD (Parallel)",
-            EngineKind::Win32LargeFetchHdd => "HDD (Sequential)",
-        };
-
-        let engine_str_b = match engine_kind_b {
-            EngineKind::NtfsMft => "⚡ NTFS MFT",
-            EngineKind::Win32LargeFetchSsd => "SSD (Parallel)",
-            EngineKind::Win32LargeFetchHdd => "HDD (Sequential)",
-        };
+        let engine_str_a = cap_a.engine_badge().label();
+        let engine_str_b = cap_b.engine_badge().label();
 
         let is_hdd_a = cap_a.media_type == MediaType::Hdd;
         let is_hdd_b = cap_b.media_type == MediaType::Hdd;
 
         let engine_a: Box<dyn ScanEngine> = match engine_kind_a {
-            EngineKind::NtfsMft => Box::new(NtfsMftEngine::new(is_hdd_a)),
+            EngineKind::NtfsMft => Box::new(NtfsMftEngine::new(mft_store.clone(), is_hdd_a)),
             EngineKind::Win32LargeFetchSsd => Box::new(Win32LargeFetchEngine::new(false)),
             EngineKind::Win32LargeFetchHdd => Box::new(Win32LargeFetchEngine::new(true)),
         };
 
         let engine_b: Box<dyn ScanEngine> = match engine_kind_b {
-            EngineKind::NtfsMft => Box::new(NtfsMftEngine::new(is_hdd_b)),
+            EngineKind::NtfsMft => Box::new(NtfsMftEngine::new(mft_store.clone(), is_hdd_b)),
             EngineKind::Win32LargeFetchSsd => Box::new(Win32LargeFetchEngine::new(false)),
             EngineKind::Win32LargeFetchHdd => Box::new(Win32LargeFetchEngine::new(true)),
         };

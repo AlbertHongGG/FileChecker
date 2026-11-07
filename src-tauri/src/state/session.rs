@@ -1,15 +1,22 @@
+use crate::core::scanner::ntfs::MftIndexStore;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct SessionManager {
     cancel_token: Mutex<Option<Arc<AtomicBool>>>,
+    mft_store: Arc<MftIndexStore>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
             cancel_token: Mutex::new(None),
+            mft_store: Arc::new(MftIndexStore::new()),
         }
+    }
+
+    pub fn mft_store(&self) -> Arc<MftIndexStore> {
+        self.mft_store.clone()
     }
 
     pub fn cancel_current(&self) {

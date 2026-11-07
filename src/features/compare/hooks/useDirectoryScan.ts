@@ -65,6 +65,7 @@ export function useDirectoryScan() {
 
   const runCompare = useCallback(async () => {
     if (!dirA || !dirB) return;
+    setEntries([]);
     setIsLoading(true);
     setScanProgress({
       completed_a: 0,

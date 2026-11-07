@@ -23,6 +23,42 @@ pub enum EngineKind {
     Win32LargeFetchHdd,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKind {
+    Ssd,
+    Hdd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanDriver {
+    Mft,
+    Win32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineBadge {
+    pub media: MediaKind,
+    pub driver: ScanDriver,
+}
+
+impl EngineBadge {
+    pub fn new(media: MediaKind, driver: ScanDriver) -> Self {
+        Self { media, driver }
+    }
+
+    pub fn label(&self) -> String {
+        let media_str = match self.media {
+            MediaKind::Ssd => "SSD",
+            MediaKind::Hdd => "HDD",
+        };
+        let driver_str = match self.driver {
+            ScanDriver::Mft => "MFT",
+            ScanDriver::Win32 => "Win32",
+        };
+        format!("{} ({})", media_str, driver_str)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VolumeCapability {
     pub drive_letter: Option<char>,
@@ -41,6 +77,22 @@ impl VolumeCapability {
         } else {
             EngineKind::Win32LargeFetchSsd
         }
+    }
+
+    pub fn engine_badge(&self) -> EngineBadge {
+        let media = if self.media_type == MediaType::Hdd {
+            MediaKind::Hdd
+        } else {
+            MediaKind::Ssd
+        };
+
+        let driver = if self.filesystem == FileSystemKind::Ntfs && self.can_read_raw_volume {
+            ScanDriver::Mft
+        } else {
+            ScanDriver::Win32
+        };
+
+        EngineBadge::new(media, driver)
     }
 }
 
@@ -256,5 +308,69 @@ pub fn probe_volume(_path: &Path) -> VolumeCapability {
         filesystem: FileSystemKind::Other,
         media_type: MediaType::Ssd,
         can_read_raw_volume: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_engine_badge_labels() {
+        assert_eq!(
+            EngineBadge::new(MediaKind::Ssd, ScanDriver::Mft).label(),
+            "SSD (MFT)"
+        );
+        assert_eq!(
+            EngineBadge::new(MediaKind::Ssd, ScanDriver::Win32).label(),
+            "SSD (Win32)"
+        );
+        assert_eq!(
+            EngineBadge::new(MediaKind::Hdd, ScanDriver::Mft).label(),
+            "HDD (MFT)"
+        );
+        assert_eq!(
+            EngineBadge::new(MediaKind::Hdd, ScanDriver::Win32).label(),
+            "HDD (Win32)"
+        );
+    }
+
+    #[test]
+    fn test_volume_capability_engine_badge() {
+        let cap_ssd_mft = VolumeCapability {
+            drive_letter: Some('C'),
+            disk_number: Some(0),
+            filesystem: FileSystemKind::Ntfs,
+            media_type: MediaType::Ssd,
+            can_read_raw_volume: true,
+        };
+        assert_eq!(cap_ssd_mft.engine_badge().label(), "SSD (MFT)");
+
+        let cap_ssd_win32 = VolumeCapability {
+            drive_letter: Some('C'),
+            disk_number: Some(0),
+            filesystem: FileSystemKind::Ntfs,
+            media_type: MediaType::Ssd,
+            can_read_raw_volume: false,
+        };
+        assert_eq!(cap_ssd_win32.engine_badge().label(), "SSD (Win32)");
+
+        let cap_hdd_mft = VolumeCapability {
+            drive_letter: Some('D'),
+            disk_number: Some(1),
+            filesystem: FileSystemKind::Ntfs,
+            media_type: MediaType::Hdd,
+            can_read_raw_volume: true,
+        };
+        assert_eq!(cap_hdd_mft.engine_badge().label(), "HDD (MFT)");
+
+        let cap_hdd_win32 = VolumeCapability {
+            drive_letter: Some('D'),
+            disk_number: Some(1),
+            filesystem: FileSystemKind::ExFat,
+            media_type: MediaType::Hdd,
+            can_read_raw_volume: false,
+        };
+        assert_eq!(cap_hdd_win32.engine_badge().label(), "HDD (Win32)");
     }
 }

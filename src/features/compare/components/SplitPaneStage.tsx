@@ -149,7 +149,7 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
                 ) : (
                   <Cpu size={11} />
                 )}
-                {metrics?.engine || (metrics?.isHdd ? 'HDD (Sequential)' : 'SSD (Parallel)')}
+                {metrics?.engine || (metrics?.isHdd ? 'HDD (Win32)' : 'SSD (Win32)')}
               </span>
             </div>
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>

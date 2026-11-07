@@ -1,4 +1,4 @@
-pub mod mft_engine;
+pub mod ntfs;
 pub mod win32_engine;
 
 use crate::error::AppResult;
@@ -20,23 +20,54 @@ impl ScanPolicy {
     pub fn new(prune_ignored: bool) -> Self {
         let mut prune_set = FxHashSet::default();
         if prune_ignored {
+            // General / Dependencies
             prune_set.insert("node_modules");
-            prune_set.insert("target");
+            prune_set.insert("vendor");
             prune_set.insert(".git");
+            prune_set.insert(".idea");
+            prune_set.insert(".vscode");
+            prune_set.insert(".vs");
+            prune_set.insert(".cache");
+
+            // Android / Flutter / Java / Build outputs
+            prune_set.insert("build");
+            prune_set.insert(".gradle");
+            prune_set.insert(".dart_tool");
+            prune_set.insert(".kotlin");
+            prune_set.insert("bin");
+            prune_set.insert("obj");
+            prune_set.insert("target");
+            prune_set.insert("out");
             prune_set.insert("dist");
+            prune_set.insert(".output");
+
+            // Web Frameworks
             prune_set.insert(".next");
             prune_set.insert(".nuxt");
+            prune_set.insert(".turbo");
+            prune_set.insert(".svelte-kit");
+            prune_set.insert(".angular");
+            prune_set.insert(".parcel-cache");
+            prune_set.insert(".vite");
+            prune_set.insert(".vercel");
+            prune_set.insert("coverage");
+            prune_set.insert("storybook-static");
+
+            // Python / AI
             prune_set.insert(".venv");
             prune_set.insert("venv");
             prune_set.insert("__pycache__");
-            prune_set.insert(".idea");
-            prune_set.insert(".vscode");
-            prune_set.insert(".cache");
-            prune_set.insert("bin");
-            prune_set.insert("obj");
-            prune_set.insert(".turbo");
-            prune_set.insert(".output");
-            prune_set.insert(".gradle");
+            prune_set.insert(".pytest_cache");
+            prune_set.insert(".mypy_cache");
+            prune_set.insert(".ruff_cache");
+            prune_set.insert(".tox");
+
+            // C/C++ / iOS / Infra
+            prune_set.insert("cmake-build-debug");
+            prune_set.insert("cmake-build-release");
+            prune_set.insert("Pods");
+            prune_set.insert("DerivedData");
+            prune_set.insert(".terraform");
         }
         Self {
             prune_ignored,
