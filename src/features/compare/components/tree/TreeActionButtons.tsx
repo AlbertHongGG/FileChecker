@@ -42,41 +42,31 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
     const canDelete = Boolean(node.canDelete);
     const hasModifiable = Boolean(node.modifiableFiles && node.modifiableFiles.length > 0);
 
-    // Compute active states for folder action buttons based on child files or empty folder
-    const descendants = node.descendantFiles || [];
-    const isPureEmpty = descendants.length === 0;
+    // Compute active states for folder action buttons based on all subtree entries
+    const descendants = node.descendantEntries || [];
 
-    let isCopyAtoBActive = false;
-    let isCopyBtoAActive = false;
-    let isDeleteActive = false;
+    const eligibleAtoB = descendants.filter((d) => d.diffType === 'OnlyInA' || d.diffType === 'Modified');
+    const isCopyAtoBActive =
+      eligibleAtoB.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleAtoB.every((d) => actionMap?.get(d.path) === 'copy_a_to_b');
 
-    if (isPureEmpty) {
-      const selfAct = actionMap?.get(node.relative_path);
-      isCopyAtoBActive = selfAct === 'copy_a_to_b';
-      isCopyBtoAActive = selfAct === 'copy_b_to_a';
-      isDeleteActive = selfAct === 'delete_a' || selfAct === 'delete_b' || selfAct === 'delete_both';
-    } else {
-      const eligibleAtoB = descendants.filter((d) => d.diffType === 'OnlyInA' || d.diffType === 'Modified');
-      isCopyAtoBActive =
-        eligibleAtoB.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleAtoB.every((d) => actionMap?.get(d.path) === 'copy_a_to_b');
+    const eligibleBtoA = descendants.filter((d) => d.diffType === 'OnlyInB' || d.diffType === 'Modified');
+    const isCopyBtoAActive =
+      eligibleBtoA.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleBtoA.every((d) => actionMap?.get(d.path) === 'copy_b_to_a');
 
-      const eligibleBtoA = descendants.filter((d) => d.diffType === 'OnlyInB' || d.diffType === 'Modified');
-      isCopyBtoAActive =
-        eligibleBtoA.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleBtoA.every((d) => actionMap?.get(d.path) === 'copy_b_to_a');
+    const eligibleDelete = descendants.filter((d) => d.diffType !== 'Identical');
+    const isDeleteActive =
+      eligibleDelete.length > 0 &&
+      Boolean(actionMap) &&
+      eligibleDelete.every((d) => {
+        const act = actionMap?.get(d.path);
+        return act === 'delete_a' || act === 'delete_b' || act === 'delete_both';
+      });
 
-      const eligibleDelete = descendants.filter((d) => d.diffType !== 'Identical');
-      isDeleteActive =
-        eligibleDelete.length > 0 &&
-        Boolean(actionMap) &&
-        eligibleDelete.every((d) => {
-          const act = actionMap?.get(d.path);
-          return act === 'delete_a' || act === 'delete_b' || act === 'delete_both';
-        });
-    }
+    const isPureEmpty = descendants.length <= 1;
 
     const tooltipAtoB = !canCopyAtoB
       ? isPureEmpty ? 'Folder does not exist in A' : 'No files to copy to B'

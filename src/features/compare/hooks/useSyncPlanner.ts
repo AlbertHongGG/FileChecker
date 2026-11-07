@@ -6,6 +6,7 @@ import {
   UnifiedEntry,
   SyncTask,
   SyncProgressPayload,
+  DescendantEntry,
 } from '../../../types';
 import { useNotification } from '../../../contexts/NotificationContext';
 
@@ -53,112 +54,64 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
 
   const setDirectoryAction = useCallback(
     (
-      dirPath: string,
-      dirDiffType: UnifiedEntry['diff_kind']['type'],
-      targetFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }>,
+      targetEntries: DescendantEntry[],
       actionType: 'copy_a_to_b' | 'copy_b_to_a' | 'delete' | 'skip'
     ) => {
       setActionMap((prev) => {
         const next = new Map(prev);
 
-        // Case 1: Pure empty directory (no descendant files)
-        if (targetFiles.length === 0) {
-          if (actionType === 'skip') {
-            next.delete(dirPath);
-            return next;
-          }
-
-          if (actionType === 'copy_a_to_b') {
-            if (next.get(dirPath) === 'copy_a_to_b') {
-              next.delete(dirPath);
-            } else {
-              next.set(dirPath, 'copy_a_to_b');
-            }
-            return next;
-          }
-
-          if (actionType === 'copy_b_to_a') {
-            if (next.get(dirPath) === 'copy_b_to_a') {
-              next.delete(dirPath);
-            } else {
-              next.set(dirPath, 'copy_b_to_a');
-            }
-            return next;
-          }
-
-          if (actionType === 'delete') {
-            const current = next.get(dirPath);
-            if (current === 'delete_a' || current === 'delete_b' || current === 'delete_both') {
-              next.delete(dirPath);
-            } else {
-              if (dirDiffType === 'OnlyInA') {
-                next.set(dirPath, 'delete_a');
-              } else if (dirDiffType === 'OnlyInB') {
-                next.set(dirPath, 'delete_b');
-              } else {
-                next.set(dirPath, 'delete_both');
-              }
-            }
-            return next;
-          }
-
-          return next;
-        }
-
-        // Case 2: Directory with descendant files -> Cascade to descendants
         if (actionType === 'skip') {
-          for (const f of targetFiles) {
-            next.delete(f.path);
+          for (const item of targetEntries) {
+            next.delete(item.path);
           }
-          next.delete(dirPath);
           return next;
         }
 
         if (actionType === 'copy_a_to_b') {
-          // Check if all eligible are already copy_a_to_b -> toggle to skip
-          const eligible = targetFiles.filter(
-            (f) => f.diffType === 'OnlyInA' || f.diffType === 'Modified'
+          // All items present in A or modified
+          const eligible = targetEntries.filter(
+            (item) => item.diffType === 'OnlyInA' || item.diffType === 'Modified'
           );
           const allActive =
             eligible.length > 0 &&
-            eligible.every((f) => next.get(f.path) === 'copy_a_to_b');
+            eligible.every((item) => next.get(item.path) === 'copy_a_to_b');
 
-          for (const f of eligible) {
+          for (const item of eligible) {
             if (allActive) {
-              next.delete(f.path);
+              next.delete(item.path);
             } else {
-              next.set(f.path, 'copy_a_to_b');
+              next.set(item.path, 'copy_a_to_b');
             }
           }
           return next;
         }
 
         if (actionType === 'copy_b_to_a') {
-          // Check if all eligible are already copy_b_to_a -> toggle to skip
-          const eligible = targetFiles.filter(
-            (f) => f.diffType === 'OnlyInB' || f.diffType === 'Modified'
+          // All items present in B or modified
+          const eligible = targetEntries.filter(
+            (item) => item.diffType === 'OnlyInB' || item.diffType === 'Modified'
           );
           const allActive =
             eligible.length > 0 &&
-            eligible.every((f) => next.get(f.path) === 'copy_b_to_a');
+            eligible.every((item) => next.get(item.path) === 'copy_b_to_a');
 
-          for (const f of eligible) {
+          for (const item of eligible) {
             if (allActive) {
-              next.delete(f.path);
+              next.delete(item.path);
             } else {
-              next.set(f.path, 'copy_b_to_a');
+              next.set(item.path, 'copy_b_to_a');
             }
           }
           return next;
         }
 
         if (actionType === 'delete') {
-          // Check if all eligible are already delete
-          const eligible = targetFiles.filter((f) => f.diffType !== 'Identical');
+          // All items with any difference (OnlyInA, OnlyInB, or Modified)
+          const eligible = targetEntries.filter((item) => item.diffType !== 'Identical');
           const allActive =
             eligible.length > 0 &&
-            eligible.every((f) => {
-              const current = next.get(f.path);
+            eligible.every((item) => {
+              const current = next.get(item.path);
               return (
                 current === 'delete_a' ||
                 current === 'delete_b' ||
@@ -166,16 +119,16 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
               );
             });
 
-          for (const f of eligible) {
+          for (const item of eligible) {
             if (allActive) {
-              next.delete(f.path);
+              next.delete(item.path);
             } else {
-              if (f.diffType === 'OnlyInA') {
-                next.set(f.path, 'delete_a');
-              } else if (f.diffType === 'OnlyInB') {
-                next.set(f.path, 'delete_b');
+              if (item.diffType === 'OnlyInA') {
+                next.set(item.path, 'delete_a');
+              } else if (item.diffType === 'OnlyInB') {
+                next.set(item.path, 'delete_b');
               } else {
-                next.set(f.path, 'delete_both');
+                next.set(item.path, 'delete_both');
               }
             }
           }

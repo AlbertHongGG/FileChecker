@@ -174,7 +174,7 @@ export function useDirectoryScan() {
             nextEntries.push({
               ...entry,
               diff_kind: { type: 'Identical' },
-              meta_b: metaA ? { ...metaA } : entry.meta_b,
+              meta_b: metaA ? { ...metaA } : (entry.is_dir ? { size: 0, modified_timestamp: 0, is_dir: true } : entry.meta_b),
             });
             break;
           }
@@ -183,32 +183,38 @@ export function useDirectoryScan() {
             nextEntries.push({
               ...entry,
               diff_kind: { type: 'Identical' },
-              meta_a: metaB ? { ...metaB } : entry.meta_a,
+              meta_a: metaB ? { ...metaB } : (entry.is_dir ? { size: 0, modified_timestamp: 0, is_dir: true } : entry.meta_a),
             });
             break;
           }
           case 'delete_a': {
-            if (entry.diff_kind.type !== 'OnlyInA') {
+            // Deleted from Side A
+            if (entry.meta_b) {
+              // Still exists on Side B
               nextEntries.push({
                 ...entry,
                 diff_kind: { type: 'OnlyInB' },
                 meta_a: null,
               });
             }
+            // If neither side has it, it is dropped from nextEntries
             break;
           }
           case 'delete_b': {
-            if (entry.diff_kind.type !== 'OnlyInB') {
+            // Deleted from Side B
+            if (entry.meta_a) {
+              // Still exists on Side A
               nextEntries.push({
                 ...entry,
                 diff_kind: { type: 'OnlyInA' },
                 meta_b: null,
               });
             }
+            // If neither side has it, it is dropped from nextEntries
             break;
           }
           case 'delete_both': {
-            // Completely removed from both sides
+            // Completely removed from both sides, omitted from nextEntries
             break;
           }
           default:

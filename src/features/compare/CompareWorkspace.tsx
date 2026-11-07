@@ -193,12 +193,9 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
               onToggleExpand={toggleExpand}
               onSetAction={setAction}
               onSetDirectoryAction={(node, actionType) => {
-                setDirectoryAction(
-                  node.relative_path,
-                  node.diff_kind.type,
-                  node.descendantFiles || [],
-                  actionType
-                );
+                if (node.descendantEntries) {
+                  setDirectoryAction(node.descendantEntries, actionType);
+                }
               }}
               onOpenDiff={openDiff}
               onCancelScan={cancelScan}

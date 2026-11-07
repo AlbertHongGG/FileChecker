@@ -1,5 +1,11 @@
 import { DiffKind, FileMetadata } from './entry';
 
+export interface DescendantEntry {
+  path: string;
+  diffType: DiffKind['type'];
+  isDir: boolean;
+}
+
 export interface TreeNode {
   relative_path: string;
   name: string;
@@ -13,7 +19,7 @@ export interface TreeNode {
   canCopyBtoA?: boolean;
   canDelete?: boolean;
   modifiableFiles?: string[];
-  descendantFiles?: Array<{ path: string; diffType: DiffKind['type'] }>;
+  descendantEntries?: DescendantEntry[];
 }
 
 export interface FlattenedRow {

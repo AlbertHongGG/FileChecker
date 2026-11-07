@@ -1,4 +1,4 @@
-import { UnifiedEntry, TreeNode, FlattenedRow } from '../../../types';
+import { UnifiedEntry, TreeNode, FlattenedRow, DescendantEntry } from '../../../types';
 
 interface SubtreeSummary {
   hasA: boolean;
@@ -9,7 +9,7 @@ interface SubtreeSummary {
   canCopyBtoA: boolean;
   canDelete: boolean;
   modifiableFiles: string[];
-  descendantFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }>;
+  descendantEntries: DescendantEntry[];
 }
 
 function propagateDirectoryState(node: TreeNode): SubtreeSummary {
@@ -21,7 +21,9 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     const canCopyBtoA = hasB && node.diff_kind.type !== 'Identical';
     const canDelete = hasA || hasB;
     const modifiableFiles = node.diff_kind.type === 'Modified' ? [node.relative_path] : [];
-    const descendantFiles = [{ path: node.relative_path, diffType: node.diff_kind.type }];
+    const descendantEntries: DescendantEntry[] = [
+      { path: node.relative_path, diffType: node.diff_kind.type, isDir: false },
+    ];
 
     return {
       hasA,
@@ -32,7 +34,7 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       canCopyBtoA,
       canDelete,
       modifiableFiles,
-      descendantFiles,
+      descendantEntries,
     };
   }
 
@@ -44,7 +46,7 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
   let canCopyBtoA = false;
   let canDelete = false;
   const modifiableFiles: string[] = [];
-  const descendantFiles: Array<{ path: string; diffType: UnifiedEntry['diff_kind']['type'] }> = [];
+  const descendantEntries: DescendantEntry[] = [];
 
   if (node.children && node.children.length > 0) {
     for (const child of node.children) {
@@ -60,31 +62,10 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
       for (const m of summary.modifiableFiles) {
         modifiableFiles.push(m);
       }
-      for (const d of summary.descendantFiles) {
-        descendantFiles.push(d);
+      for (const d of summary.descendantEntries) {
+        descendantEntries.push(d);
       }
     }
-  }
-
-  // Assign capabilities to folder
-  // If the folder has no child differences/files (empty directory), its own existence determines capabilities
-  const hasSelfA = Boolean(node.meta_a);
-  const hasSelfB = Boolean(node.meta_b);
-
-  if (descendantFiles.length === 0) {
-    // Pure empty folder
-    node.canCopyAtoB = hasSelfA && !hasSelfB;
-    node.canCopyBtoA = hasSelfB && !hasSelfA;
-    node.canDelete = hasSelfA || hasSelfB;
-    node.modifiableFiles = [];
-    node.descendantFiles = [];
-  } else {
-    // Subtree folder with descendants
-    node.canCopyAtoB = canCopyAtoB;
-    node.canCopyBtoA = canCopyBtoA;
-    node.canDelete = canDelete;
-    node.modifiableFiles = modifiableFiles;
-    node.descendantFiles = descendantFiles;
   }
 
   // Update directory physical presence based on descendants
@@ -115,16 +96,44 @@ function propagateDirectoryState(node: TreeNode): SubtreeSummary {
     node.diff_kind = { type: 'Identical' };
   }
 
+  // Always include the directory itself in descendantEntries so any action on this folder
+  // includes the folder entity itself
+  descendantEntries.push({
+    path: node.relative_path,
+    diffType: node.diff_kind.type,
+    isDir: true,
+  });
+
+  const hasSelfA = Boolean(node.meta_a);
+  const hasSelfB = Boolean(node.meta_b);
+
+  // If no child differences exist, check directory self
+  if (canCopyAtoB || (hasSelfA && !hasSelfB)) {
+    node.canCopyAtoB = true;
+  } else {
+    node.canCopyAtoB = false;
+  }
+
+  if (canCopyBtoA || (hasSelfB && !hasSelfA)) {
+    node.canCopyBtoA = true;
+  } else {
+    node.canCopyBtoA = false;
+  }
+
+  node.canDelete = canDelete || hasSelfA || hasSelfB;
+  node.modifiableFiles = modifiableFiles;
+  node.descendantEntries = descendantEntries;
+
   return {
     hasA,
     hasB,
     hasDiff: hasDiff || node.diff_kind.type !== 'Identical',
     childCount,
-    canCopyAtoB: node.canCopyAtoB ?? false,
-    canCopyBtoA: node.canCopyBtoA ?? false,
-    canDelete: node.canDelete ?? false,
+    canCopyAtoB: node.canCopyAtoB,
+    canCopyBtoA: node.canCopyBtoA,
+    canDelete: node.canDelete,
     modifiableFiles,
-    descendantFiles,
+    descendantEntries,
   };
 }
 
