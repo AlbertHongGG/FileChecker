@@ -37,7 +37,7 @@ export const ExecutionBar: React.FC<ExecutionBarProps> = ({
         zIndex: 80,
       }}
     >
-      {isExecuting && syncProgress ? (
+      {isExecuting ? (
         <div
           style={{
             display: 'flex',
@@ -48,8 +48,10 @@ export const ExecutionBar: React.FC<ExecutionBarProps> = ({
           }}
         >
           <Loader2 size={14} className="animate-spin" style={{ color: 'var(--status-info)' }} />
-          <span>
-            {syncProgress.current} / {syncProgress.total}
+          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+            {syncProgress
+              ? `${syncProgress.current} / ${syncProgress.total}`
+              : `0 / ${pendingActionsCount}`}
           </span>
         </div>
       ) : (
