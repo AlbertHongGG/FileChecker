@@ -2,11 +2,11 @@ pub mod ntfs;
 pub mod win32_engine;
 
 use crate::error::AppResult;
-use crate::models::FileMetadata;
+use crate::models::{FileMetadata, ScanStage, SideScanProgress};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 pub type ScanSnapshot = FxHashMap<String, FileMetadata>;
 
@@ -86,20 +86,14 @@ impl ScanPolicy {
 
 pub struct ScanObserver {
     pub cancel_token: Arc<AtomicBool>,
-    pub count: Arc<AtomicUsize>,
-    pub completed_units: Arc<AtomicUsize>,
-    pub total_units: Arc<AtomicUsize>,
-    pub current_name: Arc<Mutex<String>>,
+    stage: Arc<RwLock<ScanStage>>,
 }
 
 impl ScanObserver {
     pub fn new(cancel_token: Arc<AtomicBool>) -> Self {
         Self {
             cancel_token,
-            count: Arc::new(AtomicUsize::new(0)),
-            completed_units: Arc::new(AtomicUsize::new(0)),
-            total_units: Arc::new(AtomicUsize::new(0)),
-            current_name: Arc::new(Mutex::new(String::new())),
+            stage: Arc::new(RwLock::new(ScanStage::Initializing)),
         }
     }
 
@@ -108,20 +102,74 @@ impl ScanObserver {
         self.cancel_token.load(Ordering::Relaxed)
     }
 
-    #[inline]
-    pub fn inc_files(&self, n: usize) {
-        self.count.fetch_add(n, Ordering::Relaxed);
-    }
-
-    pub fn set_current_name(&self, name: &str) {
-        if let Ok(mut lock) = self.current_name.lock() {
-            *lock = name.to_string();
+    pub fn set_reading_mft(&self, completed_blocks: usize, total_blocks: usize) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::ReadingMftBlocks {
+                completed_blocks,
+                total_blocks,
+            };
         }
     }
 
-    pub fn set_progress(&self, completed: usize, total: usize) {
-        self.completed_units.store(completed, Ordering::Relaxed);
-        self.total_units.store(total, Ordering::Relaxed);
+    pub fn set_building_index(&self, records_parsed: usize) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::BuildingIndex { records_parsed };
+        }
+    }
+
+    pub fn set_extracting_subtree(&self, files_indexed: usize) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::ExtractingSubtree { files_indexed };
+        }
+    }
+
+    pub fn set_walking_dirs(
+        &self,
+        completed_dirs: usize,
+        total_dirs: usize,
+        files_scanned: usize,
+        current_dir: &str,
+    ) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::WalkingDirectories {
+                completed_dirs,
+                total_dirs,
+                files_scanned,
+                current_dir: current_dir.to_string(),
+            };
+        }
+    }
+
+    pub fn mark_completed(&self, total_files: usize) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::Completed { total_files };
+        }
+    }
+
+    pub fn mark_cancelled(&self) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::Cancelled;
+        }
+    }
+
+    pub fn mark_failed(&self, error: &str) {
+        if let Ok(mut stage) = self.stage.write() {
+            *stage = ScanStage::Failed {
+                error: error.to_string(),
+            };
+        }
+    }
+
+    pub fn current_stage(&self) -> ScanStage {
+        self.stage
+            .read()
+            .map(|s| s.clone())
+            .unwrap_or(ScanStage::Initializing)
+    }
+
+    pub fn snapshot(&self, engine: &str, is_hdd: bool) -> SideScanProgress {
+        let stage = self.current_stage();
+        SideScanProgress::new(engine.to_string(), is_hdd, stage)
     }
 }
 

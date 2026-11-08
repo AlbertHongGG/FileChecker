@@ -5,7 +5,8 @@ use crate::platform::windows::win32_fs::{read_dir_large_fetch, RawDirEntry};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub struct Win32LargeFetchEngine {
     pub is_hdd: bool,
@@ -23,6 +24,7 @@ impl Win32LargeFetchEngine {
         observer: &ScanObserver,
     ) -> AppResult<ScanSnapshot> {
         if !root.exists() {
+            observer.mark_completed(0);
             return Ok(FxHashMap::default());
         }
 
@@ -35,7 +37,11 @@ impl Win32LargeFetchEngine {
             .filter(|e| !e.is_dir || !policy.should_prune(&e.name))
             .collect();
 
-        observer.set_progress(0, filtered_top.len());
+        let total_dirs = filtered_top.len();
+        let completed_dirs = Arc::new(AtomicUsize::new(0));
+        let files_scanned = Arc::new(AtomicUsize::new(0));
+
+        observer.set_walking_dirs(0, total_dirs, 0, "");
 
         let results: Vec<AppResult<FxHashMap<String, FileMetadata>>> = filtered_top
             .into_par_iter()
@@ -58,7 +64,7 @@ impl Win32LargeFetchEngine {
                     );
 
                     let top_path = root.join(&top.name);
-                    let mut stack: Vec<(PathBuf, String)> = vec![(top_path, top_rel)];
+                    let mut stack: Vec<(PathBuf, String)> = vec![(top_path, top_rel.clone())];
                     let mut file_batch = 0usize;
 
                     while let Some((dir_path, rel_prefix)) = stack.pop() {
@@ -98,7 +104,9 @@ impl Win32LargeFetchEngine {
                                 );
                                 file_batch += 1;
                                 if file_batch >= 128 {
-                                    observer.inc_files(file_batch);
+                                    let count = files_scanned.fetch_add(file_batch, Ordering::Relaxed) + file_batch;
+                                    let done = completed_dirs.load(Ordering::Relaxed);
+                                    observer.set_walking_dirs(done, total_dirs, count, &top_rel);
                                     file_batch = 0;
                                 }
                             }
@@ -106,21 +114,27 @@ impl Win32LargeFetchEngine {
                     }
 
                     if file_batch > 0 {
-                        observer.inc_files(file_batch);
+                        let count = files_scanned.fetch_add(file_batch, Ordering::Relaxed) + file_batch;
+                        let done = completed_dirs.load(Ordering::Relaxed);
+                        observer.set_walking_dirs(done, total_dirs, count, &top_rel);
                     }
                 } else {
                     local_map.insert(
-                        top_rel,
+                        top_rel.clone(),
                         FileMetadata {
                             size: top.size,
                             modified_timestamp: top.modified_timestamp,
                             is_dir: false,
                         },
                     );
-                    observer.inc_files(1);
+                    let count = files_scanned.fetch_add(1, Ordering::Relaxed) + 1;
+                    let done = completed_dirs.load(Ordering::Relaxed);
+                    observer.set_walking_dirs(done, total_dirs, count, &top_rel);
                 }
 
-                observer.completed_units.fetch_add(1, Ordering::Relaxed);
+                let done = completed_dirs.fetch_add(1, Ordering::Relaxed) + 1;
+                let count = files_scanned.load(Ordering::Relaxed);
+                observer.set_walking_dirs(done, total_dirs, count, &top_rel);
                 Ok(local_map)
             })
             .collect();
@@ -131,7 +145,8 @@ impl Win32LargeFetchEngine {
             final_map.extend(map);
         }
 
-        observer.set_current_name("");
+        let total_files = final_map.values().filter(|m| !m.is_dir).count();
+        observer.mark_completed(total_files);
         Ok(final_map)
     }
 
@@ -142,6 +157,7 @@ impl Win32LargeFetchEngine {
         observer: &ScanObserver,
     ) -> AppResult<ScanSnapshot> {
         if !root.exists() {
+            observer.mark_completed(0);
             return Ok(FxHashMap::default());
         }
 
@@ -154,16 +170,21 @@ impl Win32LargeFetchEngine {
             .filter(|e| !e.is_dir || !policy.should_prune(&e.name))
             .collect();
 
-        observer.set_progress(0, filtered_top.len());
+        let total_dirs = filtered_top.len();
+        let mut completed_dirs = 0usize;
+        let mut files_scanned = 0usize;
+
+        observer.set_walking_dirs(0, total_dirs, 0, "");
         let mut final_map = FxHashMap::default();
 
         for top in filtered_top {
             if observer.is_cancelled() {
+                observer.mark_cancelled();
                 return Err(AppError::ScanCancelled);
             }
 
-            observer.set_current_name(&top.name);
             let top_rel = top.name.clone();
+            observer.set_walking_dirs(completed_dirs, total_dirs, files_scanned, &top_rel);
 
             if top.is_dir {
                 final_map.insert(
@@ -176,11 +197,12 @@ impl Win32LargeFetchEngine {
                 );
 
                 let top_path = root.join(&top.name);
-                let mut stack: Vec<(PathBuf, String)> = vec![(top_path, top_rel)];
+                let mut stack: Vec<(PathBuf, String)> = vec![(top_path, top_rel.clone())];
                 let mut file_batch = 0usize;
 
                 while let Some((dir_path, rel_prefix)) = stack.pop() {
                     if observer.is_cancelled() {
+                        observer.mark_cancelled();
                         return Err(AppError::ScanCancelled);
                     }
 
@@ -216,7 +238,8 @@ impl Win32LargeFetchEngine {
                             );
                             file_batch += 1;
                             if file_batch >= 128 {
-                                observer.inc_files(file_batch);
+                                files_scanned += file_batch;
+                                observer.set_walking_dirs(completed_dirs, total_dirs, files_scanned, &top_rel);
                                 file_batch = 0;
                             }
                         }
@@ -224,24 +247,28 @@ impl Win32LargeFetchEngine {
                 }
 
                 if file_batch > 0 {
-                    observer.inc_files(file_batch);
+                    files_scanned += file_batch;
+                    observer.set_walking_dirs(completed_dirs, total_dirs, files_scanned, &top_rel);
                 }
             } else {
                 final_map.insert(
-                    top_rel,
+                    top_rel.clone(),
                     FileMetadata {
                         size: top.size,
                         modified_timestamp: top.modified_timestamp,
                         is_dir: false,
                     },
                 );
-                observer.inc_files(1);
+                files_scanned += 1;
+                observer.set_walking_dirs(completed_dirs, total_dirs, files_scanned, &top_rel);
             }
 
-            observer.completed_units.fetch_add(1, Ordering::Relaxed);
+            completed_dirs += 1;
+            observer.set_walking_dirs(completed_dirs, total_dirs, files_scanned, &top_rel);
         }
 
-        observer.set_current_name("");
+        let total_files = final_map.values().filter(|m| !m.is_dir).count();
+        observer.mark_completed(total_files);
         Ok(final_map)
     }
 }

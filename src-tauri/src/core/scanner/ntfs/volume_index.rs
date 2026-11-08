@@ -69,7 +69,7 @@ impl MftVolumeIndex {
         let mut stack: Vec<(u64, String)> = vec![(target_frn, String::new())];
         let mut file_count = 0usize;
 
-        observer.set_current_name("Extracting subtree...");
+        observer.set_extracting_subtree(0);
 
         while let Some((parent_id, prefix)) = stack.pop() {
             if observer.is_cancelled() {
@@ -122,19 +122,14 @@ impl MftVolumeIndex {
 
                         file_count += 1;
                         if file_count % 512 == 0 {
-                            observer.inc_files(512);
+                            observer.set_extracting_subtree(file_count);
                         }
                     }
                 }
             }
         }
 
-        let remainder = file_count % 512;
-        if remainder > 0 {
-            observer.inc_files(remainder);
-        }
-
-        observer.set_current_name("");
+        observer.set_extracting_subtree(file_count);
         Ok(snapshot)
     }
 }

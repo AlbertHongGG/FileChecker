@@ -48,14 +48,15 @@ impl MftIndexStore {
         }
 
         // 3. Cache miss: Read fragments and build index (runs in parallel across different drives!)
-        observer.set_current_name("Reading MFT table...");
+        observer.set_reading_mft(0, 1);
         let fragments = reader.read_all_fragments(
             |completed, total| {
-                observer.set_progress(completed, total);
+                observer.set_reading_mft(completed, total);
             },
             || observer.is_cancelled(),
         )?;
 
+        observer.set_building_index(fragments.len());
         let new_index = Arc::new(MftVolumeIndex::new(drive_letter, current_usn, fragments));
         *slot_guard = Some(new_index.clone());
 

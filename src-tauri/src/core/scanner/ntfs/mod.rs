@@ -71,10 +71,13 @@ impl ScanEngine for NtfsMftEngine {
                         }
                     }
                 }
+                let total_files = snapshot.values().filter(|m| !m.is_dir).count();
+                observer.mark_completed(total_files);
                 Ok(snapshot)
             }
             Err(e) => {
                 if matches!(e, AppError::ScanCancelled) {
+                    observer.mark_cancelled();
                     return Err(e);
                 }
                 // Graceful fallback to Win32 large fetch

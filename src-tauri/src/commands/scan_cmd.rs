@@ -3,7 +3,7 @@ use crate::core::scanner::ntfs::NtfsMftEngine;
 use crate::core::scanner::win32_engine::Win32LargeFetchEngine;
 use crate::core::scanner::{ScanEngine, ScanObserver, ScanPolicy};
 use crate::error::AppError;
-use crate::models::{AnchorProgressPayload, UnifiedEntry};
+use crate::models::{ScanProgressPayload, UnifiedEntry};
 use crate::platform::{probe_volume, EngineKind, MediaType};
 use crate::state::SessionManager;
 use std::path::PathBuf;
@@ -78,42 +78,14 @@ pub async fn compare_directories(
         let ticker_handle = std::thread::spawn(move || {
             while !cancel_ticker.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                let count_a = obs_a_clone.count.load(Ordering::Relaxed);
-                let count_b = obs_b_clone.count.load(Ordering::Relaxed);
-                let done_a = obs_a_clone.completed_units.load(Ordering::Relaxed);
-                let done_b = obs_b_clone.completed_units.load(Ordering::Relaxed);
-                let total_a = obs_a_clone.total_units.load(Ordering::Relaxed);
-                let total_b = obs_b_clone.total_units.load(Ordering::Relaxed);
-
-                let cur_a = obs_a_clone
-                    .current_name
-                    .lock()
-                    .map(|l| l.clone())
-                    .unwrap_or_default();
-                let cur_b = obs_b_clone
-                    .current_name
-                    .lock()
-                    .map(|l| l.clone())
-                    .unwrap_or_default();
+                let side_a = obs_a_clone.snapshot(&eng_a_name, is_hdd_a);
+                let side_b = obs_b_clone.snapshot(&eng_b_name, is_hdd_b);
 
                 let _ = win_ticker.emit(
                     "scan-progress",
-                    AnchorProgressPayload {
-                        completed_a: done_a,
-                        total_a,
-                        current_name_a: cur_a,
-                        count_a,
-                        is_hdd_a,
-                        engine_a: eng_a_name.clone(),
-
-                        completed_b: done_b,
-                        total_b,
-                        current_name_b: cur_b,
-                        count_b,
-                        is_hdd_b,
-                        engine_b: eng_b_name.clone(),
-
-                        phase: "Scanning".to_string(),
+                    ScanProgressPayload {
+                        side_a,
+                        side_b,
                     },
                 );
             }

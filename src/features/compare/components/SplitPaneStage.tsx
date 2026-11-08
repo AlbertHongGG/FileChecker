@@ -6,22 +6,56 @@ import {
   Cpu,
   Zap,
 } from 'lucide-react';
-import { ScanProgressPayload } from '../../../types';
+import { ScanProgressPayload, SideScanProgress, ScanStage } from '../../../types';
 
-export interface SideScanMetrics {
-  completed: number;
-  total: number;
-  currentName: string;
-  count: number;
-  isHdd: boolean;
-  engine?: string;
+function formatStageDetails(stage: ScanStage): { label: string; stats: string } {
+  switch (stage.kind) {
+    case 'Initializing':
+      return { label: 'Preparing...', stats: 'Initializing' };
+
+    case 'ReadingMftBlocks':
+      return {
+        label: 'Reading MFT Blocks',
+        stats: `${stage.data.completed_blocks}/${stage.data.total_blocks} blocks`,
+      };
+
+    case 'BuildingIndex':
+      return {
+        label: 'Building Index',
+        stats: `${stage.data.records_parsed.toLocaleString()} records`,
+      };
+
+    case 'ExtractingSubtree':
+      return {
+        label: 'Extracting Subtree',
+        stats: `${stage.data.files_indexed.toLocaleString()} files`,
+      };
+
+    case 'WalkingDirectories':
+      return {
+        label: stage.data.current_dir ? `[${stage.data.current_dir}]` : 'Scanning...',
+        stats: `${stage.data.completed_dirs}/${stage.data.total_dirs} (${stage.data.files_scanned.toLocaleString()} files)`,
+      };
+
+    case 'Completed':
+      return {
+        label: 'Ready',
+        stats: `${stage.data.total_files.toLocaleString()} files`,
+      };
+
+    case 'Cancelled':
+      return { label: 'Cancelled', stats: 'Aborted' };
+
+    case 'Failed':
+      return { label: 'Error', stats: stage.data.error || 'Failed' };
+  }
 }
 
 interface PaneStatusCardProps {
   side: 'A' | 'B';
   dirPath: string | null;
   isLoading: boolean;
-  metrics: SideScanMetrics | null;
+  progress: SideScanProgress | null;
   onSelect: () => void;
 }
 
@@ -29,7 +63,7 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
   side,
   dirPath,
   isLoading,
-  metrics,
+  progress,
   onSelect,
 }) => {
   const label = `Directory ${side}`;
@@ -91,10 +125,10 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
 
   // State 2: Scanning in progress
   if (isLoading) {
-    const percent =
-      metrics && metrics.total > 0
-        ? Math.min(100, Math.round((metrics.completed / metrics.total) * 100))
-        : 0;
+    const percent = progress?.percent ?? 0;
+    const stageDetails = progress ? formatStageDetails(progress.stage) : { label: 'Scanning...', stats: '0%' };
+    const engineText = progress?.engine || (progress?.is_hdd ? 'HDD (Win32)' : 'SSD (Win32)');
+    const isMft = engineText.includes('MFT');
 
     return (
       <div
@@ -131,10 +165,10 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
                   fontWeight: 600,
                   padding: '2px 6px',
                   borderRadius: '4px',
-                  background: metrics?.engine?.includes('MFT')
+                  background: isMft
                     ? 'var(--status-success-light)'
                     : 'var(--status-info-light)',
-                  color: metrics?.engine?.includes('MFT')
+                  color: isMft
                     ? 'var(--status-success)'
                     : 'var(--status-info)',
                   display: 'flex',
@@ -142,14 +176,14 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
                   gap: '4px',
                 }}
               >
-                {metrics?.engine?.includes('MFT') ? (
+                {isMft ? (
                   <Zap size={11} />
-                ) : metrics?.isHdd ? (
+                ) : progress?.is_hdd ? (
                   <HardDrive size={11} />
                 ) : (
                   <Cpu size={11} />
                 )}
-                {metrics?.engine || (metrics?.isHdd ? 'HDD (Win32)' : 'SSD (Win32)')}
+                {engineText}
               </span>
             </div>
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
@@ -196,12 +230,12 @@ export const PaneStatusCard: React.FC<PaneStatusCardProps> = ({
                 whiteSpace: 'nowrap',
                 color: 'var(--text-secondary)',
               }}
-              title={metrics?.currentName || 'Preparing...'}
+              title={stageDetails.label}
             >
-              {metrics?.currentName ? `[${metrics.currentName}]` : 'Scanning...'}
+              {stageDetails.label}
             </span>
             <span style={{ fontFamily: 'monospace' }}>
-              {metrics?.completed || 0}/{metrics?.total || 0} ({metrics?.count.toLocaleString() || 0} files)
+              {stageDetails.stats}
             </span>
           </div>
         </div>
@@ -296,28 +330,6 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
   onSelectDirA,
   onSelectDirB,
 }) => {
-  const metricsA: SideScanMetrics | null = scanProgress
-    ? {
-        completed: scanProgress.completed_a,
-        total: scanProgress.total_a,
-        currentName: scanProgress.current_name_a,
-        count: scanProgress.count_a,
-        isHdd: scanProgress.is_hdd_a,
-        engine: scanProgress.engine_a,
-      }
-    : null;
-
-  const metricsB: SideScanMetrics | null = scanProgress
-    ? {
-        completed: scanProgress.completed_b,
-        total: scanProgress.total_b,
-        currentName: scanProgress.current_name_b,
-        count: scanProgress.count_b,
-        isHdd: scanProgress.is_hdd_b,
-        engine: scanProgress.engine_b,
-      }
-    : null;
-
   return (
     <div
       style={{
@@ -341,7 +353,7 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
           side="A"
           dirPath={dirA}
           isLoading={isLoading}
-          metrics={metricsA}
+          progress={scanProgress?.side_a ?? null}
           onSelect={onSelectDirA}
         />
       </div>
@@ -352,7 +364,7 @@ export const SplitPaneStage: React.FC<SplitPaneStageProps> = ({
           side="B"
           dirPath={dirB}
           isLoading={isLoading}
-          metrics={metricsB}
+          progress={scanProgress?.side_b ?? null}
           onSelect={onSelectDirB}
         />
       </div>

@@ -68,17 +68,18 @@ export function useDirectoryScan() {
     setEntries([]);
     setIsLoading(true);
     setScanProgress({
-      completed_a: 0,
-      total_a: 0,
-      current_name_a: '',
-      count_a: 0,
-      is_hdd_a: false,
-      completed_b: 0,
-      total_b: 0,
-      current_name_b: '',
-      count_b: 0,
-      is_hdd_b: false,
-      phase: 'Initializing',
+      side_a: {
+        engine: 'Preparing...',
+        is_hdd: false,
+        percent: 0,
+        stage: { kind: 'Initializing' },
+      },
+      side_b: {
+        engine: 'Preparing...',
+        is_hdd: false,
+        percent: 0,
+        stage: { kind: 'Initializing' },
+      },
     });
 
     try {
