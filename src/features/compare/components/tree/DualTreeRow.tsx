@@ -7,17 +7,17 @@ import { ROW_HEIGHT } from '../../hooks/useVirtualScroll';
 interface DualTreeRowProps {
   row: FlattenedRow;
   action: PlannedAction;
-  actionMap?: Map<string, PlannedAction>;
+  activeDirAction?: DirectoryActionType;
   onToggleExpand: () => void;
   onSetAction: (act: PlannedAction) => void;
   onSetDirectoryAction?: (actionType: DirectoryActionType) => void;
   onOpenDiff: () => void;
 }
 
-export const DualTreeRow: React.FC<DualTreeRowProps> = ({
+export const DualTreeRow: React.FC<DualTreeRowProps> = React.memo(({
   row,
   action,
-  actionMap,
+  activeDirAction,
   onToggleExpand,
   onSetAction,
   onSetDirectoryAction,
@@ -60,9 +60,9 @@ export const DualTreeRow: React.FC<DualTreeRowProps> = ({
       <TreeActionButtons
         node={node}
         action={action}
+        activeDirAction={activeDirAction}
         existsInA={existsInA}
         existsInB={existsInB}
-        actionMap={actionMap}
         onSetAction={onSetAction}
         onSetDirectoryAction={onSetDirectoryAction}
         onOpenDiff={onOpenDiff}
@@ -80,4 +80,4 @@ export const DualTreeRow: React.FC<DualTreeRowProps> = ({
       />
     </div>
   );
-};
+});

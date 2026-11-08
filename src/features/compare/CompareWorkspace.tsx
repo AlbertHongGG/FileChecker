@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useDirectoryScan } from './hooks/useDirectoryScan';
 import { useSyncPlanner } from './hooks/useSyncPlanner';
 import { useTreeHierarchy } from './hooks/useTreeHierarchy';
@@ -11,6 +11,7 @@ import { DualTreeVirtualList } from './components/tree/DualTreeVirtualList';
 import { ExecutionBar } from './components/ExecutionBar';
 import { DiffDrawer } from '../diff/components/DiffDrawer';
 import { collectSubtreeDescendants } from './utils/subtreeQuery';
+import { computeActiveDirectoryActions } from './utils/subtreeStateAggregator';
 
 interface CompareWorkspaceProps {
   onBack: () => void;
@@ -52,11 +53,18 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
 
   // 3. Tree hierarchy & filtering
   const {
+    tree,
     rows,
     toggleExpand,
     onlyDiffs,
     setOnlyDiffs,
   } = useTreeHierarchy(entries, scanVersion);
+
+  // Memoize precomputed directory action states (single Bottom-Up traversal O(N))
+  const activeDirectoryActions = useMemo(
+    () => computeActiveDirectoryActions(tree, actionMap),
+    [tree, actionMap]
+  );
 
   // 4. Virtual list rendering slice
   const {
@@ -157,6 +165,7 @@ export default function CompareWorkspace({ onBack }: CompareWorkspaceProps) {
             totalHeight={totalHeight}
             paddingTop={paddingTop}
             actionMap={actionMap}
+            activeDirectoryActions={activeDirectoryActions}
             onToggleExpand={toggleExpand}
             onSetAction={setAction}
             onSetDirectoryAction={(node, actionType) => {

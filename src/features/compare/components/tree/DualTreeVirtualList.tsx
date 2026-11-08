@@ -11,6 +11,7 @@ interface DualTreeVirtualListProps {
   totalHeight: number;
   paddingTop: number;
   actionMap: Map<string, PlannedAction>;
+  activeDirectoryActions?: Map<string, DirectoryActionType>;
   onToggleExpand: (path: string) => void;
   onSetAction: (path: string, act: PlannedAction) => void;
   onSetDirectoryAction?: (
@@ -20,7 +21,7 @@ interface DualTreeVirtualListProps {
   onOpenDiff: (node: TreeNode) => void;
 }
 
-export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
+export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = React.memo(({
   scrollContainerRef,
   onScroll,
   onlyDiffs,
@@ -29,6 +30,7 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
   totalHeight,
   paddingTop,
   actionMap,
+  activeDirectoryActions,
   onToggleExpand,
   onSetAction,
   onSetDirectoryAction,
@@ -66,7 +68,7 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
                 key={row.node.relative_path}
                 row={row}
                 action={actionMap.get(row.node.relative_path) || 'skip'}
-                actionMap={actionMap}
+                activeDirAction={activeDirectoryActions?.get(row.node.relative_path)}
                 onToggleExpand={() => onToggleExpand(row.node.relative_path)}
                 onSetAction={(act) => onSetAction(row.node.relative_path, act)}
                 onSetDirectoryAction={
@@ -82,4 +84,4 @@ export const DualTreeVirtualList: React.FC<DualTreeVirtualListProps> = ({
       )}
     </div>
   );
-};
+});

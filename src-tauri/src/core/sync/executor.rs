@@ -1,162 +1,215 @@
+use super::observer::SyncObserver;
+use super::plan::SyncExecutionPlan;
 use crate::error::{AppError, AppResult};
-use crate::models::{SyncAction, SyncTask};
+use crate::platform::{MediaType, VolumeCapability};
+use rayon::prelude::*;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncExecutionStrategy {
+    Sequential,
+    Parallel { threads: usize },
+}
+
+impl SyncExecutionStrategy {
+    pub fn from_capabilities(cap_a: &VolumeCapability, cap_b: &VolumeCapability) -> Self {
+        // If either volume incurs seek penalty (HDD), enforce Sequential mode to avoid head thrashing.
+        if cap_a.media_type == MediaType::Hdd || cap_b.media_type == MediaType::Hdd {
+            SyncExecutionStrategy::Sequential
+        } else {
+            // Both are SSDs (or unknown assumed SSD) -> use controlled parallel worker pool
+            SyncExecutionStrategy::Parallel { threads: 6 }
+        }
+    }
+}
 
 pub struct SyncExecutor;
 
 impl SyncExecutor {
-    /// Validates that a relative path does not escape the boundary via parent dir traversal ('..').
-    fn sanitize_relative_path(rel_path: &str) -> AppResult<PathBuf> {
-        let path = Path::new(rel_path);
-        for comp in path.components() {
-            if let std::path::Component::ParentDir = comp {
-                return Err(AppError::InvalidOperation(format!(
-                    "Path traversal attempt detected: {}",
-                    rel_path
-                )));
-            }
-        }
-        Ok(path.to_path_buf())
-    }
-
-    /// Attempts to clear read-only flag before deletion on Windows
-    fn safe_remove(path: &Path, rel_path: &str) -> AppResult<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        // If file is read-only, remove read-only attribute so delete succeeds
-        if let Ok(meta) = fs::metadata(path) {
-            let mut permissions = meta.permissions();
-            #[allow(clippy::permissions_set_readonly_false)]
-            if permissions.readonly() {
-                permissions.set_readonly(false);
-                let _ = fs::set_permissions(path, permissions);
-            }
-        }
-
-        if path.is_dir() {
-            fs::remove_dir_all(path).map_err(|e| AppError::SyncFailed {
-                path: rel_path.to_string(),
-                reason: format!("Failed to delete directory: {}", e),
-            })
-        } else {
-            fs::remove_file(path).map_err(|e| AppError::SyncFailed {
-                path: rel_path.to_string(),
-                reason: format!("Failed to delete file: {}", e),
-            })
-        }
-    }
-
-    /// Recursively cleans up empty parent directories up to root boundary
-    fn clean_empty_parents(root: &Path, target: &Path) {
-        let mut curr = target.parent();
-        while let Some(parent) = curr {
-            if parent == root || !parent.starts_with(root) {
-                break;
-            }
-            // Check if directory is empty
-            if let Ok(mut entries) = fs::read_dir(parent) {
-                if entries.next().is_none() {
-                    // It is empty, remove it
-                    let _ = fs::remove_dir(parent);
-                    curr = parent.parent();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    pub fn execute<F>(
-        dir_a: &Path,
-        dir_b: &Path,
-        tasks: Vec<SyncTask>,
-        on_progress: F,
-    ) -> AppResult<usize>
-    where
-        F: Fn(usize, usize, &str),
-    {
-        let total = tasks.len();
-        let mut completed = 0;
-
-        for (index, task) in tasks.iter().enumerate() {
-            if task.action == SyncAction::Skip {
-                on_progress(index + 1, total, &task.relative_path);
-                continue;
-            }
-
-            let clean_rel = Self::sanitize_relative_path(&task.relative_path)?;
-            let path_a = dir_a.join(&clean_rel);
-            let path_b = dir_b.join(&clean_rel);
-
-            match task.action {
-                SyncAction::CopyAtoB => {
-                    if path_a.exists() {
-                        if path_a.is_dir() {
-                            fs::create_dir_all(&path_b).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to create directory B: {}", e),
-                            })?;
-                        } else {
-                            if let Some(parent) = path_b.parent() {
-                                fs::create_dir_all(parent).map_err(|e| AppError::SyncFailed {
-                                    path: task.relative_path.clone(),
-                                    reason: format!("Failed to create parent directory for B: {}", e),
-                                })?;
-                            }
-                            fs::copy(&path_a, &path_b).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to copy to B: {}", e),
-                            })?;
+    /// Fast file copy without redundant pre-emptive metadata checks.
+    /// If destination exists and has Read-Only attribute (Windows), clears Read-Only and retries.
+    pub fn fast_copy(src: &Path, dst: &Path) -> AppResult<()> {
+        match fs::copy(src, dst) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    if let Ok(meta) = fs::metadata(dst) {
+                        let mut perms = meta.permissions();
+                        #[allow(clippy::permissions_set_readonly_false)]
+                        if perms.readonly() {
+                            perms.set_readonly(false);
+                            let _ = fs::set_permissions(dst, perms);
+                            return fs::copy(src, dst).map(|_| ()).map_err(|retry_err| {
+                                AppError::SyncFailed {
+                                    path: src.to_string_lossy().to_string(),
+                                    reason: format!(
+                                        "Failed to copy after clearing read-only: {}",
+                                        retry_err
+                                    ),
+                                }
+                            });
                         }
                     }
                 }
-                SyncAction::CopyBtoA => {
-                    if path_b.exists() {
-                        if path_b.is_dir() {
-                            fs::create_dir_all(&path_a).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to create directory A: {}", e),
-                            })?;
-                        } else {
-                            if let Some(parent) = path_a.parent() {
-                                fs::create_dir_all(parent).map_err(|e| AppError::SyncFailed {
-                                    path: task.relative_path.clone(),
-                                    reason: format!("Failed to create parent directory for A: {}", e),
-                                })?;
-                            }
-                            fs::copy(&path_b, &path_a).map_err(|e| AppError::SyncFailed {
-                                path: task.relative_path.clone(),
-                                reason: format!("Failed to copy to A: {}", e),
-                            })?;
+                Err(AppError::SyncFailed {
+                    path: src.to_string_lossy().to_string(),
+                    reason: format!("Failed to copy file: {}", e),
+                })
+            }
+        }
+    }
+
+    /// Fast file removal without pre-emptive metadata queries.
+    /// Only queries metadata if permission denied (clears Read-Only attribute on Windows).
+    pub fn fast_remove_file(target: &Path) -> AppResult<()> {
+        match fs::remove_file(target) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(());
+                }
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    if let Ok(meta) = fs::metadata(target) {
+                        let mut perms = meta.permissions();
+                        #[allow(clippy::permissions_set_readonly_false)]
+                        if perms.readonly() {
+                            perms.set_readonly(false);
+                            let _ = fs::set_permissions(target, perms);
+                            return fs::remove_file(target).map_err(|retry_err| {
+                                AppError::SyncFailed {
+                                    path: target.to_string_lossy().to_string(),
+                                    reason: format!(
+                                        "Failed to delete file after clearing read-only: {}",
+                                        retry_err
+                                    ),
+                                }
+                            });
                         }
                     }
                 }
-                SyncAction::DeleteA => {
-                    Self::safe_remove(&path_a, &task.relative_path)?;
-                    Self::clean_empty_parents(dir_a, &path_a);
-                }
-                SyncAction::DeleteB => {
-                    Self::safe_remove(&path_b, &task.relative_path)?;
-                    Self::clean_empty_parents(dir_b, &path_b);
-                }
-                SyncAction::DeleteBoth => {
-                    Self::safe_remove(&path_a, &task.relative_path)?;
-                    Self::safe_remove(&path_b, &task.relative_path)?;
-                    Self::clean_empty_parents(dir_a, &path_a);
-                    Self::clean_empty_parents(dir_b, &path_b);
-                }
-                SyncAction::Skip => {}
+                Err(AppError::SyncFailed {
+                    path: target.to_string_lossy().to_string(),
+                    reason: format!("Failed to delete file: {}", e),
+                })
             }
+        }
+    }
 
-            completed += 1;
-            on_progress(index + 1, total, &task.relative_path);
+    /// Removes a directory and all of its contents.
+    pub fn fast_remove_dir(target: &Path) -> AppResult<()> {
+        match fs::remove_dir_all(target) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(());
+                }
+                Err(AppError::SyncFailed {
+                    path: target.to_string_lossy().to_string(),
+                    reason: format!("Failed to delete directory: {}", e),
+                })
+            }
+        }
+    }
+
+    /// Executes the pre-compiled plan using the selected hardware-aware execution strategy.
+    pub fn execute_plan(
+        plan: &SyncExecutionPlan,
+        strategy: SyncExecutionStrategy,
+        observer: &SyncObserver,
+    ) -> AppResult<usize> {
+        // Step 1: Pre-create all destination directories
+        for dir in &plan.dirs_to_create {
+            if observer.is_cancelled() {
+                return Err(AppError::ScanCancelled);
+            }
+            fs::create_dir_all(dir).map_err(|e| AppError::SyncFailed {
+                path: dir.to_string_lossy().to_string(),
+                reason: format!("Failed to create destination directory: {}", e),
+            })?;
         }
 
-        Ok(completed)
+        // Step 2: Directory deletions (top-level folders first)
+        for op in &plan.delete_dir_ops {
+            if observer.is_cancelled() {
+                return Err(AppError::ScanCancelled);
+            }
+            Self::fast_remove_dir(&op.target)?;
+            observer.inc(&op.rel_path);
+        }
+
+        // Step 3: File deletions
+        match strategy {
+            SyncExecutionStrategy::Parallel { threads } => {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .map_err(|e| AppError::TaskExecution(e.to_string()))?;
+
+                pool.install(|| {
+                    plan.delete_file_ops.par_iter().try_for_each(|op| {
+                        if observer.is_cancelled() {
+                            return Err(AppError::ScanCancelled);
+                        }
+                        Self::fast_remove_file(&op.target)?;
+                        observer.inc(&op.rel_path);
+                        Ok(())
+                    })
+                })?;
+            }
+            SyncExecutionStrategy::Sequential => {
+                for op in &plan.delete_file_ops {
+                    if observer.is_cancelled() {
+                        return Err(AppError::ScanCancelled);
+                    }
+                    Self::fast_remove_file(&op.target)?;
+                    observer.inc(&op.rel_path);
+                }
+            }
+        }
+
+        // Step 4: File copies
+        match strategy {
+            SyncExecutionStrategy::Parallel { threads } => {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .map_err(|e| AppError::TaskExecution(e.to_string()))?;
+
+                pool.install(|| {
+                    plan.copy_ops.par_iter().try_for_each(|op| {
+                        if observer.is_cancelled() {
+                            return Err(AppError::ScanCancelled);
+                        }
+                        Self::fast_copy(&op.src, &op.dst)?;
+                        observer.inc(&op.rel_path);
+                        Ok(())
+                    })
+                })?;
+            }
+            SyncExecutionStrategy::Sequential => {
+                for op in &plan.copy_ops {
+                    if observer.is_cancelled() {
+                        return Err(AppError::ScanCancelled);
+                    }
+                    Self::fast_copy(&op.src, &op.dst)?;
+                    observer.inc(&op.rel_path);
+                }
+            }
+        }
+
+        // Step 5: Advance progress for tasks that were coalesced under deleted directories
+        for _ in 0..plan.coalesced_count {
+            observer.inc("");
+        }
+
+        // Step 6: Deferred bottom-up empty parent directory cleanup
+        // Directly invoking fs::remove_dir returns DirectoryNotEmpty in O(1) if non-empty,
+        // eliminating expensive fs::read_dir enumeration syscalls.
+        for parent in &plan.candidate_empty_parents {
+            let _ = fs::remove_dir(parent);
+        }
+
+        Ok(observer.completed())
     }
 }

@@ -9,14 +9,13 @@ import {
 } from 'lucide-react';
 import { TreeNode, PlannedAction, DirectoryActionType } from '../../../../types';
 import { Tooltip } from '../../../../components/common/Tooltip';
-import { isSubtreeActionActive } from '../../utils/subtreeQuery';
 
 interface TreeActionButtonsProps {
   node: TreeNode;
   action: PlannedAction;
+  activeDirAction?: DirectoryActionType;
   existsInA: boolean;
   existsInB: boolean;
-  actionMap?: Map<string, PlannedAction>;
   onSetAction: (act: PlannedAction) => void;
   onSetDirectoryAction?: (actionType: DirectoryActionType) => void;
   onOpenDiff: () => void;
@@ -25,9 +24,9 @@ interface TreeActionButtonsProps {
 export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
   node,
   action,
+  activeDirAction,
   existsInA,
   existsInB,
-  actionMap,
   onSetAction,
   onSetDirectoryAction,
   onOpenDiff,
@@ -44,10 +43,10 @@ export const TreeActionButtons: React.FC<TreeActionButtonsProps> = ({
     const canDelete = existsInA || existsInB;
     const hasModifiable = Boolean(node.hasModifiable);
 
-    // Subtree Policy Active States
-    const isMirrorAtoBActive = isSubtreeActionActive(node, actionMap, 'mirror_a_to_b');
-    const isMirrorBtoAActive = isSubtreeActionActive(node, actionMap, 'mirror_b_to_a');
-    const isDeleteActive = isSubtreeActionActive(node, actionMap, 'delete');
+    // Subtree Policy Active States (O(1) precomputed lookup)
+    const isMirrorAtoBActive = activeDirAction === 'mirror_a_to_b';
+    const isMirrorBtoAActive = activeDirAction === 'mirror_b_to_a';
+    const isDeleteActive = activeDirAction === 'delete';
 
     const tooltipAtoB = !canMirrorAtoB
       ? 'Directory does not exist in A'

@@ -9,6 +9,7 @@ export type PlannedAction =
 export interface SyncTask {
   relative_path: string;
   action: PlannedAction;
+  is_dir?: boolean;
 }
 
 export interface SyncResult {

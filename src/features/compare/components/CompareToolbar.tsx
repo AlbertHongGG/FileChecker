@@ -29,7 +29,7 @@ interface CompareToolbarProps {
   onCancelScan: () => void;
 }
 
-export const CompareToolbar: React.FC<CompareToolbarProps> = ({
+export const CompareToolbar: React.FC<CompareToolbarProps> = React.memo(({
   onBack,
   dirA,
   dirB,
@@ -178,4 +178,4 @@ export const CompareToolbar: React.FC<CompareToolbarProps> = ({
       />
     </div>
   );
-};
+});

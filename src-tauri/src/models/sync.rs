@@ -20,6 +20,8 @@ pub enum SyncAction {
 pub struct SyncTask {
     pub relative_path: String,
     pub action: SyncAction,
+    #[serde(default)]
+    pub is_dir: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

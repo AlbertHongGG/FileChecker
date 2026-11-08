@@ -1,5 +1,4 @@
-import { TreeNode, DescendantEntry, DirectoryActionType, PlannedAction } from '../../../types';
-import { getExpectedEntryAction } from './subtreePolicy';
+import { TreeNode, DescendantEntry } from '../../../types';
 
 /**
  * On-demand stack-based traversal to collect all descendant entries
@@ -47,26 +46,4 @@ export function collectModifiableFiles(rootNode: TreeNode): string[] {
   }
 
   return result;
-}
-
-/**
- * Checks whether all eligible entries in the subtree are already active for this directory action.
- */
-export function isSubtreeActionActive(
-  rootNode: TreeNode,
-  actionMap: Map<string, PlannedAction> | undefined,
-  dirAction: DirectoryActionType
-): boolean {
-  if (!actionMap || dirAction === 'skip') {
-    return false;
-  }
-
-  const descendants = collectSubtreeDescendants(rootNode);
-  const eligible = descendants.filter((d) => d.diffType !== 'Identical');
-  if (eligible.length === 0) return false;
-
-  return eligible.every((item) => {
-    const expected = getExpectedEntryAction(item.diffType, dirAction);
-    return expected ? actionMap.get(item.path) === expected : true;
-  });
 }

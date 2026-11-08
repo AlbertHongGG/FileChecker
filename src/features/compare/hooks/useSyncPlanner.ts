@@ -190,10 +190,19 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
         current_file: '',
       });
 
+      const entryMap = new Map<string, boolean>();
+      for (const e of entries) {
+        entryMap.set(e.relative_path, e.is_dir);
+      }
+
       const tasks: SyncTask[] = [];
       for (const [path, action] of actionMap.entries()) {
         if (action !== 'skip') {
-          tasks.push({ relative_path: path, action });
+          tasks.push({
+            relative_path: path,
+            action,
+            is_dir: entryMap.get(path) ?? false,
+          });
         }
       }
 
@@ -216,7 +225,7 @@ export function useSyncPlanner(entries: UnifiedEntry[], scanVersion: number) {
         setSyncProgress(null);
       }
     },
-    [pendingActionsCount, actionMap, addNotification]
+    [pendingActionsCount, actionMap, entries, addNotification]
   );
 
   return {
