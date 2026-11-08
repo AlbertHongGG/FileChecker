@@ -103,7 +103,6 @@ body {
   font-family: var(--font-sans);
   background-color: var(--bg-base);
   color: var(--text-primary);
-  transition: background-color 0.4s ease, color 0.4s ease;
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -146,7 +145,7 @@ h1, h2, h3, h4, h5, h6 {
 /* TitleBar */
 .titlebar {
   height: var(--titlebar-height);
-  background: transparent;
+  background: var(--bg-base);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -189,7 +188,7 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .icon-btn:hover {
