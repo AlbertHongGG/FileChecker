@@ -26,13 +26,14 @@ impl MftIndexStore {
     pub fn get_or_build(
         &self,
         drive_letter: char,
+        is_hdd: bool,
         observer: &ScanObserver,
     ) -> AppResult<Arc<MftVolumeIndex>> {
         let slot = self.get_slot(drive_letter);
         let mut slot_guard = slot.lock().unwrap();
 
         // 1. Open volume reader to check current USN state
-        let mut reader = NtfsVolumeReader::open(drive_letter)?;
+        let mut reader = NtfsVolumeReader::open(drive_letter, is_hdd)?;
         let current_usn = reader.query_usn_state();
 
         // 2. Cache hit check under drive-specific lock

@@ -87,19 +87,34 @@ impl ScanPolicy {
 pub struct ScanObserver {
     pub cancel_token: Arc<AtomicBool>,
     stage: Arc<RwLock<ScanStage>>,
+    engine_label: Arc<RwLock<String>>,
 }
 
 impl ScanObserver {
-    pub fn new(cancel_token: Arc<AtomicBool>) -> Self {
+    pub fn new(cancel_token: Arc<AtomicBool>, initial_engine: &str) -> Self {
         Self {
             cancel_token,
             stage: Arc::new(RwLock::new(ScanStage::Initializing)),
+            engine_label: Arc::new(RwLock::new(initial_engine.to_string())),
         }
     }
 
     #[inline]
     pub fn is_cancelled(&self) -> bool {
         self.cancel_token.load(Ordering::Relaxed)
+    }
+
+    pub fn set_engine_label(&self, label: &str) {
+        if let Ok(mut lock) = self.engine_label.write() {
+            *lock = label.to_string();
+        }
+    }
+
+    pub fn engine_label(&self) -> String {
+        self.engine_label
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_reading_mft(&self, completed_blocks: usize, total_blocks: usize) {
@@ -167,9 +182,10 @@ impl ScanObserver {
             .unwrap_or(ScanStage::Initializing)
     }
 
-    pub fn snapshot(&self, engine: &str, is_hdd: bool) -> SideScanProgress {
+    pub fn snapshot(&self, is_hdd: bool) -> SideScanProgress {
         let stage = self.current_stage();
-        SideScanProgress::new(engine.to_string(), is_hdd, stage)
+        let engine = self.engine_label();
+        SideScanProgress::new(engine, is_hdd, stage)
     }
 }
 

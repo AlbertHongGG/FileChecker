@@ -42,6 +42,9 @@ impl Drop for SafeHandle {
     }
 }
 
+unsafe impl Send for SafeHandle {}
+unsafe impl Sync for SafeHandle {}
+
 #[derive(Debug, Clone)]
 pub struct RawDirEntry {
     pub name: String,

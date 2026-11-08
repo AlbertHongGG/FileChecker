@@ -1,7 +1,9 @@
-use super::record_parser::{MftRecordFragment, MftRecordParser};
+use super::bitmap::MftBitmap;
+use super::record_parser::{apply_usa_fixup, MftRecordFragment, MftRecordParser};
 use crate::error::{AppError, AppResult};
 use crate::platform::windows::win32_fs::SafeHandle;
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
@@ -34,10 +36,32 @@ pub struct DataRun {
 }
 
 #[derive(Debug, Clone)]
-struct MftReadSegment {
+struct ActiveMicroBlock {
     disk_offset: u64,
     byte_len: usize,
     start_record: u64,
+    record_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MftRecordSlice {
+    pub slice_offset_in_buf: usize,
+    pub slice_len: usize,
+    pub start_record: u64,
+    pub record_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MftReadBatch {
+    pub disk_offset: u64,
+    pub total_bytes: usize,
+    pub active_slices: Vec<MftRecordSlice>,
+}
+
+struct ReadChunk {
+    batch_idx: usize,
+    buf: Vec<u8>,
+    slices: Vec<MftRecordSlice>,
 }
 
 pub struct VolumeUsnState {
@@ -52,10 +76,11 @@ pub struct NtfsVolumeReader {
     pub bytes_per_cluster: u64,
     pub max_records: u64,
     pub volume_serial: u64,
+    pub is_hdd: bool,
 }
 
 impl NtfsVolumeReader {
-    pub fn open(drive_letter: char) -> AppResult<Self> {
+    pub fn open(drive_letter: char, is_hdd: bool) -> AppResult<Self> {
         let dev_path = format!("\\\\.\\{}:", drive_letter);
         let wide_dev: Vec<u16> = OsStr::new(&dev_path)
             .encode_wide()
@@ -136,6 +161,7 @@ impl NtfsVolumeReader {
             bytes_per_cluster,
             max_records,
             volume_serial: serial as u64,
+            is_hdd,
         })
     }
 
@@ -166,19 +192,9 @@ impl NtfsVolumeReader {
         }
     }
 
-    /// Read Record 0 ($MFT), extract Data Runs and $BITMAP with sector alignment,
-    /// skip empty 4MB chunks, order remaining chunks by LCN elevator schedule,
-    /// and read into MftRecordFragment collection.
-    pub fn read_all_fragments<F>(
-        &mut self,
-        mut on_progress: F,
-        is_cancelled: impl Fn() -> bool,
-    ) -> AppResult<Vec<MftRecordFragment>>
-    where
-        F: FnMut(usize, usize),
-    {
-        // 1. Read Record 0 ($MFT)
-        let mut in_frn = 0u64;
+    /// Read any file record by record index using FSCTL_GET_NTFS_FILE_RECORD and apply USA fixup.
+    pub fn fetch_file_record(&self, frn: u64) -> AppResult<[u8; 1024]> {
+        let mut in_frn = frn;
         let mut out_rec_buf = vec![0u8; 4096];
         let mut bytes_returned = 0u32;
 
@@ -187,7 +203,7 @@ impl NtfsVolumeReader {
                 self.safe_handle.handle(),
                 FSCTL_GET_NTFS_FILE_RECORD,
                 &mut in_frn as *mut _ as *mut _,
-                8,
+                std::mem::size_of::<u64>() as u32,
                 out_rec_buf.as_mut_ptr() as *mut _,
                 out_rec_buf.len() as u32,
                 &mut bytes_returned,
@@ -196,270 +212,41 @@ impl NtfsVolumeReader {
         };
 
         if ok == 0 || bytes_returned < 1036 {
-            return Err(AppError::TaskExecution("Failed to read MFT Record 0".into()));
-        }
-
-        let rec0 = &out_rec_buf[12..1036];
-        let (raw_data_runs, raw_bitmap_runs, bitmap_real_size) =
-            self.parse_mft_record_zero(rec0)?;
-
-        if raw_data_runs.is_empty() {
-            return Err(AppError::TaskExecution("No MFT data runs found".into()));
-        }
-
-        // 2. Read $BITMAP into memory with cluster alignment and logical offset preservation
-        let bitmap_bytes = self.read_bitmap(&raw_bitmap_runs, bitmap_real_size)?;
-
-        // Find true highest active record from bitmap
-        let mut highest_active_record = None;
-        for (byte_idx, &byte_val) in bitmap_bytes.iter().enumerate().rev() {
-            if byte_val != 0 {
-                for bit in (0..8).rev() {
-                    if (byte_val & (1 << bit)) != 0 {
-                        highest_active_record = Some((byte_idx as u64 * 8) + bit);
-                        break;
-                    }
-                }
-                break;
-            }
-        }
-
-        if let Some(har) = highest_active_record {
-            if har + 1 < self.max_records {
-                self.max_records = har + 1;
-            }
-        }
-
-        // 3. Convert raw Data Runs into indexed Data Runs
-        let mut indexed_runs = Vec::new();
-        let mut cur_rec = 0u64;
-        for (lcn, cluster_count) in raw_data_runs {
-            let records_in_run = (cluster_count * self.bytes_per_cluster) / 1024;
-            indexed_runs.push(DataRun {
-                lcn,
-                cluster_count,
-                start_record: cur_rec,
-                record_count: records_in_run,
-            });
-            cur_rec += records_in_run;
-        }
-
-        // 4. Build 4MB (4,096 records) segments and filter out inactive ones using bitmap
-        const CHUNK_RECORDS: u64 = 4096; // 4MB
-        let mut active_segments: Vec<MftReadSegment> = Vec::new();
-
-        for run in &indexed_runs {
-            if run.start_record >= self.max_records {
-                break;
-            }
-
-            let mut run_record_offset = 0u64;
-            while run_record_offset < run.record_count {
-                let seg_start_rec = run.start_record + run_record_offset;
-                if seg_start_rec >= self.max_records {
-                    break;
-                }
-
-                let seg_rec_count = (run.record_count - run_record_offset)
-                    .min(CHUNK_RECORDS)
-                    .min(self.max_records - seg_start_rec);
-
-                // Bitmap check: does [seg_start_rec..seg_start_rec + seg_rec_count] have any active bits?
-                let start_byte = (seg_start_rec / 8) as usize;
-                let end_byte = (((seg_start_rec + seg_rec_count + 7) / 8) as usize)
-                    .min(bitmap_bytes.len());
-
-                let has_active = if start_byte < bitmap_bytes.len() {
-                    bitmap_bytes[start_byte..end_byte].iter().any(|&b| b != 0)
-                } else {
-                    false
-                };
-
-                if has_active {
-                    let disk_offset = (run.lcn * self.bytes_per_cluster) + (run_record_offset * 1024);
-                    active_segments.push(MftReadSegment {
-                        disk_offset,
-                        byte_len: (seg_rec_count * 1024) as usize,
-                        start_record: seg_start_rec,
-                    });
-                }
-
-                run_record_offset += seg_rec_count;
-            }
-        }
-
-        // 5. Elevator Scheduling: Sort active segments by physical LCN disk offset
-        active_segments.sort_unstable_by_key(|s| s.disk_offset);
-
-        // 6. Execute elevator reads with contiguous coalescing
-        let total_active_segments = active_segments.len();
-        let mut records_parsed = Vec::with_capacity(self.max_records.min(2_000_000) as usize);
-
-        let mut read_buf = vec![0u8; 8 * 1024 * 1024]; // 8MB read buffer
-        let mut seg_idx = 0;
-
-        while seg_idx < total_active_segments {
-            if is_cancelled() {
-                return Err(AppError::ScanCancelled);
-            }
-
-            // Coalesce contiguous segments up to 8MB
-            let first_seg = &active_segments[seg_idx];
-            let start_offset = first_seg.disk_offset;
-            let mut batch_bytes = 0usize;
-            let batch_start_idx = seg_idx;
-
-            while seg_idx < total_active_segments {
-                let seg = &active_segments[seg_idx];
-                let is_contiguous = seg_idx == batch_start_idx
-                    || seg.disk_offset == active_segments[seg_idx - 1].disk_offset + active_segments[seg_idx - 1].byte_len as u64;
-
-                if is_contiguous && (batch_bytes + seg.byte_len <= read_buf.len()) {
-                    batch_bytes += seg.byte_len;
-                    seg_idx += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Read batch from disk
-            unsafe {
-                let mut new_pos = 0i64;
-                SetFilePointerEx(self.safe_handle.handle(), start_offset as i64, &mut new_pos, FILE_BEGIN);
-            }
-
-            let mut bytes_read = 0u32;
-            let read_ok = unsafe {
-                ReadFile(
-                    self.safe_handle.handle(),
-                    read_buf.as_mut_ptr() as *mut _,
-                    batch_bytes as u32,
-                    &mut bytes_read,
-                    std::ptr::null_mut(),
-                )
-            };
-
-            if read_ok == 0 || bytes_read == 0 {
-                return Err(AppError::TaskExecution(format!(
-                    "Failed to read MFT segment on drive {}: at offset {} (expected {} bytes, read {})",
-                    self.drive_letter, start_offset, batch_bytes, bytes_read
-                )));
-            }
-
-            // Parse each segment within the batch
-            let mut batch_offset = 0usize;
-            for s in &active_segments[batch_start_idx..seg_idx] {
-                if batch_offset + s.byte_len > bytes_read as usize {
-                    break;
-                }
-
-                let seg_slice = &read_buf[batch_offset..batch_offset + s.byte_len];
-                let seg_start_rec = s.start_record;
-
-                let parsed_chunk: Vec<MftRecordFragment> = seg_slice
-                    .par_chunks_exact(1024)
-                    .enumerate()
-                    .filter_map(|(idx, rec)| {
-                        let rec_id = seg_start_rec + idx as u64;
-                        MftRecordParser::parse_record_fragment(rec, rec_id)
-                    })
-                    .collect();
-
-                records_parsed.extend(parsed_chunk);
-                batch_offset += s.byte_len;
-            }
-
-            on_progress(seg_idx, total_active_segments);
-        }
-
-        if records_parsed.is_empty() {
             return Err(AppError::TaskExecution(format!(
-                "MFT read on drive {}: returned 0 valid records",
-                self.drive_letter
+                "Failed to fetch NTFS File Record {} on drive {}:",
+                frn, self.drive_letter
             )));
         }
 
-        Ok(records_parsed)
-    }
-
-    fn parse_mft_record_zero(&self, rec0: &[u8]) -> AppResult<(Vec<(u64, u64)>, Vec<(u64, u64)>, u64)> {
-        if rec0.len() < 1024 || &rec0[0..4] != b"FILE" {
-            return Err(AppError::TaskExecution("Invalid Record 0 header".into()));
-        }
-
         let mut rec = [0u8; 1024];
-        rec.copy_from_slice(&rec0[..1024]);
-
-        let usa_offset = u16::from_le_bytes(rec[4..6].try_into().unwrap()) as usize;
-        let usa_size = u16::from_le_bytes(rec[6..8].try_into().unwrap()) as usize;
-
-        if usa_offset + (usa_size * 2) <= 1024 && usa_size >= 2 {
-            let update_seq = u16::from_le_bytes(rec[usa_offset..usa_offset + 2].try_into().unwrap());
-            for i in 1..usa_size {
-                let sector_end = i * 512 - 2;
-                if sector_end + 2 <= 1024 {
-                    let disk_seq = u16::from_le_bytes(rec[sector_end..sector_end + 2].try_into().unwrap());
-                    if disk_seq == update_seq {
-                        let b0 = rec[usa_offset + i * 2];
-                        let b1 = rec[usa_offset + i * 2 + 1];
-                        rec[sector_end] = b0;
-                        rec[sector_end + 1] = b1;
-                    }
-                }
-            }
+        rec.copy_from_slice(&out_rec_buf[12..1036]);
+        if !apply_usa_fixup(&mut rec) {
+            return Err(AppError::TaskExecution(format!(
+                "USA fixup failed for File Record {} on drive {}:",
+                frn, self.drive_letter
+            )));
         }
 
-        let first_attr_offset = u16::from_le_bytes(rec[20..22].try_into().unwrap()) as usize;
-        let mut cur = first_attr_offset;
-        let mut data_runs = Vec::new();
-        let mut bitmap_runs = Vec::new();
-        let mut bitmap_real_size = 0u64;
-
-        while cur + 8 <= rec.len() {
-            let attr_type = u32::from_le_bytes(rec[cur..cur + 4].try_into().unwrap());
-            if attr_type == 0xFFFF_FFFF || attr_type == 0 {
-                break;
-            }
-            let attr_len = u32::from_le_bytes(rec[cur + 4..cur + 8].try_into().unwrap()) as usize;
-            if attr_len == 0 || cur + attr_len > rec.len() {
-                break;
-            }
-
-            let non_resident = rec[cur + 8];
-
-            if attr_type == 0x80 && non_resident == 1 {
-                // $DATA runs
-                let run_offset = u16::from_le_bytes(rec[cur + 32..cur + 34].try_into().unwrap()) as usize;
-                data_runs = parse_data_run_stream(&rec[cur + run_offset..cur + attr_len]);
-            } else if attr_type == 0xB0 && non_resident == 1 {
-                // $BITMAP runs
-                let run_offset = u16::from_le_bytes(rec[cur + 32..cur + 34].try_into().unwrap()) as usize;
-                bitmap_runs = parse_data_run_stream(&rec[cur + run_offset..cur + attr_len]);
-                bitmap_real_size = u64::from_le_bytes(rec[cur + 48..cur + 56].try_into().unwrap());
-            }
-
-            cur += attr_len;
-        }
-
-        Ok((data_runs, bitmap_runs, bitmap_real_size))
+        Ok(rec)
     }
 
-    fn read_bitmap(&self, bmp_runs: &[(u64, u64)], real_size: u64) -> AppResult<Vec<u8>> {
-        if bmp_runs.is_empty() || real_size == 0 {
+    /// Read aligned data runs into memory (used for non-resident $BITMAP or $ATTRIBUTE_LIST).
+    fn read_aligned_runs(&self, runs: &[(u64, u64)], real_size: u64) -> AppResult<Vec<u8>> {
+        if runs.is_empty() || real_size == 0 {
             return Ok(Vec::new());
         }
 
-        struct IndexedBitmapRun {
+        struct IndexedRun {
             lcn: u64,
             byte_len: usize,
             logical_offset: usize,
         }
 
-        let mut indexed_runs = Vec::with_capacity(bmp_runs.len());
         let mut total_alloc_bytes = 0usize;
-        for &(lcn, cluster_count) in bmp_runs {
-            let byte_len = (cluster_count * self.bytes_per_cluster) as usize;
-            indexed_runs.push(IndexedBitmapRun {
+        let mut indexed = Vec::with_capacity(runs.len());
+        for &(lcn, count) in runs {
+            let byte_len = (count * self.bytes_per_cluster) as usize;
+            indexed.push(IndexedRun {
                 lcn,
                 byte_len,
                 logical_offset: total_alloc_bytes,
@@ -467,18 +254,15 @@ impl NtfsVolumeReader {
             total_alloc_bytes += byte_len;
         }
 
-        let mut bitmap_buf = vec![0u8; total_alloc_bytes];
+        let mut buf = vec![0u8; total_alloc_bytes];
+        indexed.sort_unstable_by_key(|r| r.lcn);
 
-        // Sort bitmap runs by LCN to prevent random head movements while preserving logical_offset
-        indexed_runs.sort_unstable_by_key(|r| r.lcn);
-
-        for run in indexed_runs {
-            if run.logical_offset >= real_size as usize {
+        for r in indexed {
+            if r.logical_offset >= real_size as usize {
                 continue;
             }
 
-            let disk_offset = run.lcn * self.bytes_per_cluster;
-
+            let disk_offset = r.lcn * self.bytes_per_cluster;
             unsafe {
                 let mut new_pos = 0i64;
                 SetFilePointerEx(
@@ -493,24 +277,450 @@ impl NtfsVolumeReader {
             let ok = unsafe {
                 ReadFile(
                     self.safe_handle.handle(),
-                    bitmap_buf[run.logical_offset..run.logical_offset + run.byte_len].as_mut_ptr()
-                        as *mut _,
-                    run.byte_len as u32,
+                    buf[r.logical_offset..r.logical_offset + r.byte_len].as_mut_ptr() as *mut _,
+                    r.byte_len as u32,
                     &mut bytes_read,
                     std::ptr::null_mut(),
                 )
             };
 
-            if ok == 0 || bytes_read as usize != run.byte_len {
+            if ok == 0 || bytes_read as usize != r.byte_len {
                 return Err(AppError::TaskExecution(format!(
-                    "Failed to read MFT $BITMAP run on drive {}: read {} of {} bytes",
-                    self.drive_letter, bytes_read, run.byte_len
+                    "Failed to read aligned run on drive {}: at offset {} (read {} of {} bytes)",
+                    self.drive_letter, disk_offset, bytes_read, r.byte_len
                 )));
             }
         }
 
-        bitmap_buf.truncate(real_size as usize);
-        Ok(bitmap_buf)
+        buf.truncate(real_size as usize);
+        Ok(buf)
+    }
+
+    /// Complete resolver for Record 0 and its attributes (including $ATTRIBUTE_LIST and Extension Records).
+    /// Extracts all $DATA runs, retrieves the $BITMAP stream, and aligns max_records to cluster boundaries.
+    fn resolve_mft_metadata(&mut self) -> AppResult<(Vec<DataRun>, MftBitmap)> {
+        // 1. Fetch Record 0 ($MFT)
+        let rec0 = self.fetch_file_record(0)?;
+
+        let mut all_data_runs: Vec<(u64, Vec<(u64, u64)>)> = Vec::new(); // (starting_vcn, runs)
+        let mut bitmap_runs: Vec<(u64, u64)> = Vec::new();
+        let mut bitmap_real_size = 0u64;
+        let mut ext_records_to_fetch: FxHashSet<u64> = FxHashSet::default();
+
+        // 2. Scan Record 0 attributes
+        let first_attr_offset = u16::from_le_bytes(rec0[20..22].try_into().unwrap()) as usize;
+        let mut cur = first_attr_offset;
+
+        while cur + 8 <= rec0.len() {
+            let attr_type = u32::from_le_bytes(rec0[cur..cur + 4].try_into().unwrap());
+            if attr_type == 0xFFFF_FFFF || attr_type == 0 {
+                break;
+            }
+            let attr_len = u32::from_le_bytes(rec0[cur + 4..cur + 8].try_into().unwrap()) as usize;
+            if attr_len == 0 || cur + attr_len > rec0.len() {
+                break;
+            }
+
+            let non_resident = rec0[cur + 8];
+
+            if attr_type == 0x80 && non_resident == 1 {
+                // Non-resident $DATA in Record 0
+                if cur + 34 <= rec0.len() {
+                    let starting_vcn =
+                        u64::from_le_bytes(rec0[cur + 16..cur + 24].try_into().unwrap());
+                    let run_offset =
+                        u16::from_le_bytes(rec0[cur + 32..cur + 34].try_into().unwrap()) as usize;
+                    if cur + run_offset <= cur + attr_len {
+                        let runs = parse_data_run_stream(&rec0[cur + run_offset..cur + attr_len]);
+                        all_data_runs.push((starting_vcn, runs));
+                    }
+                }
+            } else if attr_type == 0xB0 && non_resident == 1 {
+                // Non-resident $BITMAP in Record 0
+                if cur + 56 <= rec0.len() {
+                    let run_offset =
+                        u16::from_le_bytes(rec0[cur + 32..cur + 34].try_into().unwrap()) as usize;
+                    let real_size =
+                        u64::from_le_bytes(rec0[cur + 48..cur + 56].try_into().unwrap());
+                    if cur + run_offset <= cur + attr_len {
+                        bitmap_runs = parse_data_run_stream(&rec0[cur + run_offset..cur + attr_len]);
+                        bitmap_real_size = real_size;
+                    }
+                }
+            } else if attr_type == 0x20 {
+                // $ATTRIBUTE_LIST in Record 0
+                let list_data = if non_resident == 0 {
+                    let val_len =
+                        u32::from_le_bytes(rec0[cur + 16..cur + 20].try_into().unwrap()) as usize;
+                    let val_offset =
+                        u16::from_le_bytes(rec0[cur + 20..cur + 22].try_into().unwrap()) as usize;
+                    if cur + val_offset + val_len <= rec0.len() {
+                        rec0[cur + val_offset..cur + val_offset + val_len].to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else if cur + 56 <= rec0.len() {
+                    let run_offset =
+                        u16::from_le_bytes(rec0[cur + 32..cur + 34].try_into().unwrap()) as usize;
+                    let real_size =
+                        u64::from_le_bytes(rec0[cur + 48..cur + 56].try_into().unwrap());
+                    if cur + run_offset <= cur + attr_len {
+                        let runs = parse_data_run_stream(&rec0[cur + run_offset..cur + attr_len]);
+                        self.read_aligned_runs(&runs, real_size).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Parse entries in list_data
+                let mut p = 0usize;
+                while p + 26 <= list_data.len() {
+                    let entry_type =
+                        u32::from_le_bytes(list_data[p..p + 4].try_into().unwrap());
+                    let entry_len =
+                        u16::from_le_bytes(list_data[p + 4..p + 6].try_into().unwrap()) as usize;
+                    if entry_len == 0 || p + entry_len > list_data.len() {
+                        break;
+                    }
+                    let base_ref =
+                        u64::from_le_bytes(list_data[p + 16..p + 24].try_into().unwrap())
+                            & 0x0000_FFFF_FFFF_FFFF;
+
+                    if base_ref != 0 && (entry_type == 0x80 || entry_type == 0xB0) {
+                        ext_records_to_fetch.insert(base_ref);
+                    }
+                    p += entry_len;
+                }
+            }
+
+            cur += attr_len;
+        }
+
+        // 3. Fetch all referenced extension records to retrieve overflow $DATA and $BITMAP
+        for ext_frn in ext_records_to_fetch {
+            if let Ok(ext_rec) = self.fetch_file_record(ext_frn) {
+                let first_attr =
+                    u16::from_le_bytes(ext_rec[20..22].try_into().unwrap()) as usize;
+                let mut e_cur = first_attr;
+
+                while e_cur + 8 <= ext_rec.len() {
+                    let attr_type =
+                        u32::from_le_bytes(ext_rec[e_cur..e_cur + 4].try_into().unwrap());
+                    if attr_type == 0xFFFF_FFFF || attr_type == 0 {
+                        break;
+                    }
+                    let attr_len =
+                        u32::from_le_bytes(ext_rec[e_cur + 4..e_cur + 8].try_into().unwrap())
+                            as usize;
+                    if attr_len == 0 || e_cur + attr_len > ext_rec.len() {
+                        break;
+                    }
+
+                    let non_resident = ext_rec[e_cur + 8];
+
+                    if attr_type == 0x80 && non_resident == 1 && e_cur + 34 <= ext_rec.len() {
+                        let starting_vcn =
+                            u64::from_le_bytes(ext_rec[e_cur + 16..e_cur + 24].try_into().unwrap());
+                        let run_offset = u16::from_le_bytes(
+                            ext_rec[e_cur + 32..e_cur + 34].try_into().unwrap(),
+                        ) as usize;
+                        if e_cur + run_offset <= e_cur + attr_len {
+                            let runs = parse_data_run_stream(
+                                &ext_rec[e_cur + run_offset..e_cur + attr_len],
+                            );
+                            all_data_runs.push((starting_vcn, runs));
+                        }
+                    } else if attr_type == 0xB0 && non_resident == 1 && e_cur + 56 <= ext_rec.len()
+                    {
+                        let run_offset = u16::from_le_bytes(
+                            ext_rec[e_cur + 32..e_cur + 34].try_into().unwrap(),
+                        ) as usize;
+                        let real_size =
+                            u64::from_le_bytes(ext_rec[e_cur + 48..e_cur + 56].try_into().unwrap());
+                        if e_cur + run_offset <= e_cur + attr_len {
+                            bitmap_runs = parse_data_run_stream(
+                                &ext_rec[e_cur + run_offset..e_cur + attr_len],
+                            );
+                            bitmap_real_size = real_size;
+                        }
+                    }
+
+                    e_cur += attr_len;
+                }
+            }
+        }
+
+        // 4. Sort and flatten $DATA runs by starting_vcn
+        all_data_runs.sort_unstable_by_key(|(vcn, _)| *vcn);
+        let raw_data_runs: Vec<(u64, u64)> = all_data_runs
+            .into_iter()
+            .flat_map(|(_, runs)| runs)
+            .collect();
+
+        if raw_data_runs.is_empty() {
+            return Err(AppError::TaskExecution(format!(
+                "No MFT data runs found on drive {}:",
+                self.drive_letter
+            )));
+        }
+
+        // 5. Read $BITMAP (if available) into MftBitmap
+        let bitmap = if !bitmap_runs.is_empty() && bitmap_real_size > 0 {
+            match self.read_aligned_runs(&bitmap_runs, bitmap_real_size) {
+                Ok(bytes) => MftBitmap::new(bytes),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to read MFT bitmap on drive {}: {:?}. Proceeding with safe fallback.",
+                        self.drive_letter, e
+                    );
+                    MftBitmap::default()
+                }
+            }
+        } else {
+            MftBitmap::default()
+        };
+
+        // 6. Calculate cluster-aligned max_records (prevents unaligned ReadFile Error 87)
+        let records_per_cluster = (self.bytes_per_cluster / 1024).max(1);
+        self.max_records = bitmap.aligned_max_records(self.max_records, records_per_cluster);
+
+        // 7. Convert raw runs into indexed DataRuns
+        let mut indexed_runs = Vec::new();
+        let mut cur_rec = 0u64;
+        for (lcn, cluster_count) in raw_data_runs {
+            let records_in_run = (cluster_count * self.bytes_per_cluster) / 1024;
+            indexed_runs.push(DataRun {
+                lcn,
+                cluster_count,
+                start_record: cur_rec,
+                record_count: records_in_run,
+            });
+            cur_rec += records_in_run;
+        }
+
+        Ok((indexed_runs, bitmap))
+    }
+
+    /// Read active MFT fragments using 64KB micro-blocks, elevator scheduling,
+    /// gap bridging, and a double-buffered concurrent reading pipeline.
+    pub fn read_all_fragments<F>(
+        &mut self,
+        mut on_progress: F,
+        is_cancelled: impl Fn() -> bool + Sync + Send,
+    ) -> AppResult<Vec<MftRecordFragment>>
+    where
+        F: FnMut(usize, usize) + Send,
+    {
+        let (indexed_runs, bitmap) = self.resolve_mft_metadata()?;
+
+        // Plan batches with 64KB micro-blocks and elevator sorting
+        const MICRO_BLOCK_RECORDS: u64 = 64; // 64 records = 64 KB = 16 clusters of 4KB
+        let mut active_micro_blocks: Vec<ActiveMicroBlock> = Vec::new();
+
+        for run in &indexed_runs {
+            if run.start_record >= self.max_records {
+                break;
+            }
+
+            let mut run_record_offset = 0u64;
+            while run_record_offset < run.record_count {
+                let seg_start_rec = run.start_record + run_record_offset;
+                if seg_start_rec >= self.max_records {
+                    break;
+                }
+
+                let seg_rec_count = (run.record_count - run_record_offset)
+                    .min(MICRO_BLOCK_RECORDS)
+                    .min(self.max_records - seg_start_rec);
+
+                if bitmap.is_range_active(seg_start_rec, seg_rec_count) {
+                    let disk_offset =
+                        (run.lcn * self.bytes_per_cluster) + (run_record_offset * 1024);
+                    active_micro_blocks.push(ActiveMicroBlock {
+                        disk_offset,
+                        byte_len: (seg_rec_count * 1024) as usize,
+                        start_record: seg_start_rec,
+                        record_count: seg_rec_count,
+                    });
+                }
+
+                run_record_offset += seg_rec_count;
+            }
+        }
+
+        if active_micro_blocks.is_empty() {
+            return Err(AppError::TaskExecution(format!(
+                "MFT read on drive {}: returned 0 active micro-blocks",
+                self.drive_letter
+            )));
+        }
+
+        // Elevator sorting by physical LCN disk offset
+        active_micro_blocks.sort_unstable_by_key(|b| b.disk_offset);
+
+        // Coalesce into MftReadBatch (up to 4MB, bridging small gaps <= 128KB on HDD to prevent rotational delay)
+        const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
+        let max_gap_to_bridge = if self.is_hdd { 128 * 1024 } else { 0 };
+
+        let mut batches: Vec<MftReadBatch> = Vec::new();
+        for block in active_micro_blocks {
+            let can_coalesce = if let Some(last) = batches.last_mut() {
+                let last_end = last.disk_offset + last.total_bytes as u64;
+                if block.disk_offset >= last_end {
+                    let gap = (block.disk_offset - last_end) as usize;
+                    if gap <= max_gap_to_bridge
+                        && last.total_bytes + gap + block.byte_len <= MAX_BATCH_BYTES
+                    {
+                        let slice_offset = last.total_bytes + gap;
+                        last.total_bytes = slice_offset + block.byte_len;
+                        last.active_slices.push(MftRecordSlice {
+                            slice_offset_in_buf: slice_offset,
+                            slice_len: block.byte_len,
+                            start_record: block.start_record,
+                            record_count: block.record_count,
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !can_coalesce {
+                batches.push(MftReadBatch {
+                    disk_offset: block.disk_offset,
+                    total_bytes: block.byte_len,
+                    active_slices: vec![MftRecordSlice {
+                        slice_offset_in_buf: 0,
+                        slice_len: block.byte_len,
+                        start_record: block.start_record,
+                        record_count: block.record_count,
+                    }],
+                });
+            }
+        }
+
+        let total_batches = batches.len();
+        if total_batches == 0 {
+            return Err(AppError::TaskExecution(format!(
+                "MFT read on drive {}: 0 batches planned",
+                self.drive_letter
+            )));
+        }
+
+        // Concurrent Double-Buffered Pipeline: Thread 1 (Disk Read) -> Channel -> Thread 2 (Rayon Parse)
+        let (tx, rx) = std::sync::mpsc::sync_channel::<AppResult<ReadChunk>>(2);
+        let safe_handle = &self.safe_handle;
+        let drive_letter = self.drive_letter;
+
+        let mut records_parsed = Vec::with_capacity(self.max_records.min(2_000_000) as usize);
+
+        std::thread::scope(|s| {
+            // Producer Thread: I/O Read stream
+            let is_cancelled_ref = &is_cancelled;
+            let batches_ref = &batches;
+
+            s.spawn(move || {
+                for (b_idx, batch) in batches_ref.iter().enumerate() {
+                    if is_cancelled_ref() {
+                        let _ = tx.send(Err(AppError::ScanCancelled));
+                        break;
+                    }
+
+                    let mut buf = vec![0u8; batch.total_bytes];
+                    unsafe {
+                        let mut new_pos = 0i64;
+                        SetFilePointerEx(
+                            safe_handle.handle(),
+                            batch.disk_offset as i64,
+                            &mut new_pos,
+                            FILE_BEGIN,
+                        );
+                    }
+
+                    let mut bytes_read = 0u32;
+                    let ok = unsafe {
+                        ReadFile(
+                            safe_handle.handle(),
+                            buf.as_mut_ptr() as *mut _,
+                            batch.total_bytes as u32,
+                            &mut bytes_read,
+                            std::ptr::null_mut(),
+                        )
+                    };
+
+                    if ok == 0 || bytes_read as usize != batch.total_bytes {
+                        let _ = tx.send(Err(AppError::TaskExecution(format!(
+                            "Failed to read MFT batch on drive {}: at offset {} (expected {}, read {})",
+                            drive_letter, batch.disk_offset, batch.total_bytes, bytes_read
+                        ))));
+                        break;
+                    }
+
+                    if tx
+                        .send(Ok(ReadChunk {
+                            batch_idx: b_idx,
+                            buf,
+                            slices: batch.active_slices.clone(),
+                        }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+
+            // Consumer Thread: CPU Rayon parsing with O(1) bit test
+            while let Ok(res) = rx.recv() {
+                let chunk = res?;
+                if is_cancelled() {
+                    return Err(AppError::ScanCancelled);
+                }
+
+                for slice in &chunk.slices {
+                    if slice.slice_offset_in_buf + slice.slice_len > chunk.buf.len() {
+                        continue;
+                    }
+
+                    let slice_bytes = &chunk.buf
+                        [slice.slice_offset_in_buf..slice.slice_offset_in_buf + slice.slice_len];
+                    let start_rec = slice.start_record;
+
+                    let parsed_chunk: Vec<MftRecordFragment> = slice_bytes
+                        .par_chunks_exact(1024)
+                        .enumerate()
+                        .filter_map(|(idx, rec)| {
+                            let rec_id = start_rec + idx as u64;
+                            if !bitmap.is_record_active(rec_id) {
+                                return None;
+                            }
+                            MftRecordParser::parse_record_fragment(rec, rec_id)
+                        })
+                        .collect();
+
+                    records_parsed.extend(parsed_chunk);
+                }
+
+                on_progress(chunk.batch_idx + 1, total_batches);
+            }
+
+            Ok(())
+        })?;
+
+        if records_parsed.is_empty() {
+            return Err(AppError::TaskExecution(format!(
+                "MFT read on drive {}: returned 0 valid records",
+                self.drive_letter
+            )));
+        }
+
+        Ok(records_parsed)
     }
 }
 

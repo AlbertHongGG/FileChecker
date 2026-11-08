@@ -1,10 +1,12 @@
+pub mod bitmap;
 pub mod index_store;
 pub mod record_parser;
 pub mod volume_index;
 pub mod volume_reader;
 
+pub use bitmap::MftBitmap;
 pub use index_store::MftIndexStore;
-pub use record_parser::{MftNode, MftRecordParser};
+pub use record_parser::{apply_usa_fixup, MftNode, MftRecordFragment, MftRecordParser};
 pub use volume_index::MftVolumeIndex;
 pub use volume_reader::NtfsVolumeReader;
 
@@ -58,7 +60,7 @@ impl ScanEngine for NtfsMftEngine {
         };
 
         // Attempt MFT retrieval / parsing from store
-        match self.store.get_or_build(drive_letter, observer) {
+        match self.store.get_or_build(drive_letter, self.is_hdd, observer) {
             Ok(volume_index) => {
                 let snapshot = volume_index.extract_subtree(target_frn, policy, observer)?;
                 // Safety check: if target directory has files on disk but MFT subtree extraction returned empty,
@@ -66,6 +68,8 @@ impl ScanEngine for NtfsMftEngine {
                 if snapshot.is_empty() && !is_root {
                     if let Ok(mut entries) = std::fs::read_dir(root) {
                         if entries.next().is_some() {
+                            let fallback_label = if self.is_hdd { "HDD (Win32)" } else { "SSD (Win32)" };
+                            observer.set_engine_label(fallback_label);
                             let fallback = Win32LargeFetchEngine::new(self.is_hdd);
                             return fallback.scan(root, policy, observer);
                         }
@@ -80,6 +84,12 @@ impl ScanEngine for NtfsMftEngine {
                     observer.mark_cancelled();
                     return Err(e);
                 }
+                eprintln!(
+                    "NTFS MFT scan failed on drive {}: {:?}. Falling back to Win32 LargeFetch.",
+                    drive_letter, e
+                );
+                let fallback_label = if self.is_hdd { "HDD (Win32)" } else { "SSD (Win32)" };
+                observer.set_engine_label(fallback_label);
                 // Graceful fallback to Win32 large fetch
                 let fallback = Win32LargeFetchEngine::new(self.is_hdd);
                 fallback.scan(root, policy, observer)

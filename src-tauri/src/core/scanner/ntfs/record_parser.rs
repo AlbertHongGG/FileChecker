@@ -80,6 +80,34 @@ impl MftRecordFragment {
     }
 }
 
+pub fn apply_usa_fixup(rec: &mut [u8]) -> bool {
+    if rec.len() < 1024 || &rec[0..4] != b"FILE" {
+        return false;
+    }
+
+    let usa_offset = u16::from_le_bytes(rec[4..6].try_into().unwrap()) as usize;
+    let usa_size = u16::from_le_bytes(rec[6..8].try_into().unwrap()) as usize;
+
+    if usa_offset + (usa_size * 2) <= 1024 && usa_size >= 2 {
+        let update_seq = u16::from_le_bytes(rec[usa_offset..usa_offset + 2].try_into().unwrap());
+        for i in 1..usa_size {
+            let sector_end = i * 512 - 2;
+            if sector_end + 2 <= 1024 {
+                let disk_seq = u16::from_le_bytes(rec[sector_end..sector_end + 2].try_into().unwrap());
+                if disk_seq == update_seq {
+                    let b0 = rec[usa_offset + i * 2];
+                    let b1 = rec[usa_offset + i * 2 + 1];
+                    rec[sector_end] = b0;
+                    rec[sector_end + 1] = b1;
+                }
+            }
+        }
+        true
+    } else {
+        false
+    }
+}
+
 pub struct MftRecordParser;
 
 impl MftRecordParser {
@@ -99,24 +127,8 @@ impl MftRecordParser {
         // Apply USA Fixup onto stack buffer
         let mut rec = [0u8; 1024];
         rec.copy_from_slice(&record_bytes[..1024]);
-
-        let usa_offset = u16::from_le_bytes(rec[4..6].try_into().unwrap()) as usize;
-        let usa_size = u16::from_le_bytes(rec[6..8].try_into().unwrap()) as usize;
-
-        if usa_offset + (usa_size * 2) <= 1024 && usa_size >= 2 {
-            let update_seq = u16::from_le_bytes(rec[usa_offset..usa_offset + 2].try_into().unwrap());
-            for i in 1..usa_size {
-                let sector_end = i * 512 - 2;
-                if sector_end + 2 <= 1024 {
-                    let disk_seq = u16::from_le_bytes(rec[sector_end..sector_end + 2].try_into().unwrap());
-                    if disk_seq == update_seq {
-                        let b0 = rec[usa_offset + i * 2];
-                        let b1 = rec[usa_offset + i * 2 + 1];
-                        rec[sector_end] = b0;
-                        rec[sector_end + 1] = b1;
-                    }
-                }
-            }
+        if !apply_usa_fixup(&mut rec) {
+            return None;
         }
 
         // Check if this record is an extension record (BaseFileRecordSegment != 0)

@@ -202,7 +202,7 @@ mod tests {
 
         let index = MftVolumeIndex::new('C', None, frags);
         let policy = ScanPolicy::new(true); // prune_ignored = true
-        let observer = ScanObserver::new(Arc::new(AtomicBool::new(false)));
+        let observer = ScanObserver::new(Arc::new(AtomicBool::new(false)), "TEST");
 
         let snapshot = index.extract_subtree(5, &policy, &observer).expect("Extract subtree");
 

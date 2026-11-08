@@ -64,22 +64,20 @@ pub async fn compare_directories(
             EngineKind::Win32LargeFetchHdd => Box::new(Win32LargeFetchEngine::new(true)),
         };
 
-        let observer_a = Arc::new(ScanObserver::new(cancel_token.clone()));
-        let observer_b = Arc::new(ScanObserver::new(cancel_token.clone()));
+        let observer_a = Arc::new(ScanObserver::new(cancel_token.clone(), &engine_str_a));
+        let observer_b = Arc::new(ScanObserver::new(cancel_token.clone(), &engine_str_b));
 
         // Background progress ticker
         let win_ticker = win.clone();
         let cancel_ticker = cancel_token.clone();
         let obs_a_clone = observer_a.clone();
         let obs_b_clone = observer_b.clone();
-        let eng_a_name = engine_str_a.to_string();
-        let eng_b_name = engine_str_b.to_string();
 
         let ticker_handle = std::thread::spawn(move || {
             while !cancel_ticker.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                let side_a = obs_a_clone.snapshot(&eng_a_name, is_hdd_a);
-                let side_b = obs_b_clone.snapshot(&eng_b_name, is_hdd_b);
+                let side_a = obs_a_clone.snapshot(is_hdd_a);
+                let side_b = obs_b_clone.snapshot(is_hdd_b);
 
                 let _ = win_ticker.emit(
                     "scan-progress",
