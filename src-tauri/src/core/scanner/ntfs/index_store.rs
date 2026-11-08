@@ -3,17 +3,24 @@ use super::volume_reader::NtfsVolumeReader;
 use crate::core::scanner::ScanObserver;
 use crate::error::AppResult;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 pub struct MftIndexStore {
-    cache: RwLock<FxHashMap<char, Arc<MftVolumeIndex>>>,
+    drive_slots: Mutex<FxHashMap<char, Arc<Mutex<Option<Arc<MftVolumeIndex>>>>>>,
 }
 
 impl MftIndexStore {
     pub fn new() -> Self {
         Self {
-            cache: RwLock::new(FxHashMap::default()),
+            drive_slots: Mutex::new(FxHashMap::default()),
         }
+    }
+
+    fn get_slot(&self, drive_letter: char) -> Arc<Mutex<Option<Arc<MftVolumeIndex>>>> {
+        let mut map = self.drive_slots.lock().unwrap();
+        map.entry(drive_letter)
+            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .clone()
     }
 
     pub fn get_or_build(
@@ -21,29 +28,15 @@ impl MftIndexStore {
         drive_letter: char,
         observer: &ScanObserver,
     ) -> AppResult<Arc<MftVolumeIndex>> {
+        let slot = self.get_slot(drive_letter);
+        let mut slot_guard = slot.lock().unwrap();
+
+        // 1. Open volume reader to check current USN state
         let mut reader = NtfsVolumeReader::open(drive_letter)?;
         let current_usn = reader.query_usn_state();
 
-        // 1. Fast read-lock check for valid cached index
-        {
-            let read_guard = self.cache.read().unwrap();
-            if let Some(cached) = read_guard.get(&drive_letter) {
-                if let (Some(cur), Some(cached_usn)) = (&current_usn, &cached.usn_state) {
-                    if cur.volume_serial == cached_usn.volume_serial
-                        && cur.journal_id == cached_usn.journal_id
-                        && cur.next_usn == cached_usn.next_usn
-                    {
-                        return Ok(cached.clone());
-                    }
-                }
-            }
-        }
-
-        // 2. Cache miss or stale: Acquire write lock and build
-        let mut write_guard = self.cache.write().unwrap();
-
-        // Double-check under write lock
-        if let Some(cached) = write_guard.get(&drive_letter) {
+        // 2. Cache hit check under drive-specific lock
+        if let Some(cached) = slot_guard.as_ref() {
             if let (Some(cur), Some(cached_usn)) = (&current_usn, &cached.usn_state) {
                 if cur.volume_serial == cached_usn.volume_serial
                     && cur.journal_id == cached_usn.journal_id
@@ -54,29 +47,39 @@ impl MftIndexStore {
             }
         }
 
+        // 3. Cache miss: Read fragments and build index (runs in parallel across different drives!)
         observer.set_current_name("Reading MFT table...");
-        let nodes = reader.read_all_nodes(
+        let fragments = reader.read_all_fragments(
             |completed, total| {
                 observer.set_progress(completed, total);
             },
             || observer.is_cancelled(),
         )?;
 
-        let new_index = Arc::new(MftVolumeIndex::new(drive_letter, current_usn, nodes));
-        write_guard.insert(drive_letter, new_index.clone());
+        let new_index = Arc::new(MftVolumeIndex::new(drive_letter, current_usn, fragments));
+        *slot_guard = Some(new_index.clone());
 
         Ok(new_index)
     }
 
     pub fn invalidate_drive(&self, drive_letter: char) {
-        if let Ok(mut guard) = self.cache.write() {
-            guard.remove(&drive_letter);
+        let slot = {
+            let map = self.drive_slots.lock().unwrap();
+            map.get(&drive_letter).cloned()
+        };
+        if let Some(s) = slot {
+            if let Ok(mut guard) = s.lock() {
+                *guard = None;
+            }
         }
     }
 
     pub fn invalidate_all(&self) {
-        if let Ok(mut guard) = self.cache.write() {
-            guard.clear();
+        let map = self.drive_slots.lock().unwrap().clone();
+        for (_, slot) in map {
+            if let Ok(mut guard) = slot.lock() {
+                *guard = None;
+            }
         }
     }
 }

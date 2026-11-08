@@ -1,4 +1,4 @@
-use super::record_parser::MftNode;
+use super::record_parser::{MftNode, MftRecordFragment};
 use super::volume_reader::VolumeUsnState;
 use crate::core::scanner::{ScanObserver, ScanPolicy, ScanSnapshot};
 use crate::error::{AppError, AppResult};
@@ -16,16 +16,38 @@ impl MftVolumeIndex {
     pub fn new(
         drive_letter: char,
         usn_state: Option<VolumeUsnState>,
-        nodes: Vec<MftNode>,
+        fragments: Vec<MftRecordFragment>,
     ) -> Self {
-        let mut parent_to_children: FxHashMap<u64, Vec<u32>> = FxHashMap::default();
-        parent_to_children.reserve(nodes.len() / 2);
+        let mut base_fragments: Vec<MftRecordFragment> = Vec::with_capacity(fragments.len());
+        let mut extensions: FxHashMap<u64, Vec<MftRecordFragment>> = FxHashMap::default();
 
-        for (idx, node) in nodes.iter().enumerate() {
-            parent_to_children
-                .entry(node.parent_id)
-                .or_default()
-                .push(idx as u32);
+        for frag in fragments {
+            if frag.is_extension {
+                extensions.entry(frag.record_id).or_default().push(frag);
+            } else {
+                base_fragments.push(frag);
+            }
+        }
+
+        let mut nodes = Vec::with_capacity(base_fragments.len());
+        let mut parent_to_children: FxHashMap<u64, Vec<u32>> = FxHashMap::default();
+        parent_to_children.reserve(base_fragments.len() / 2);
+
+        for mut base in base_fragments {
+            if let Some(ext_list) = extensions.remove(&base.record_id) {
+                for ext in ext_list {
+                    base.merge_from(ext);
+                }
+            }
+
+            if let Some(node) = base.into_node() {
+                let idx = nodes.len() as u32;
+                parent_to_children
+                    .entry(node.parent_id)
+                    .or_default()
+                    .push(idx);
+                nodes.push(node);
+            }
         }
 
         Self {
@@ -125,50 +147,65 @@ mod tests {
 
     #[test]
     fn test_extract_subtree_with_pruning() {
-        let nodes = vec![
-            MftNode {
+        let frags = vec![
+            MftRecordFragment {
                 record_id: 10,
+                is_extension: false,
                 parent_id: 5,
                 size: 0,
+                has_data_attr: false,
                 modified_timestamp: 0,
-                name: "src".into(),
+                name: Some("src".into()),
+                chosen_namespace: 1,
                 is_dir: true,
             },
-            MftNode {
+            MftRecordFragment {
                 record_id: 11,
+                is_extension: false,
                 parent_id: 10,
                 size: 500,
+                has_data_attr: true,
                 modified_timestamp: 12345,
-                name: "main.rs".into(),
+                name: Some("main.rs".into()),
+                chosen_namespace: 1,
                 is_dir: false,
             },
-            MftNode {
+            MftRecordFragment {
                 record_id: 12,
+                is_extension: false,
                 parent_id: 5,
                 size: 0,
+                has_data_attr: false,
                 modified_timestamp: 0,
-                name: "build".into(), // Should be pruned!
+                name: Some("build".into()), // Should be pruned!
+                chosen_namespace: 1,
                 is_dir: true,
             },
-            MftNode {
+            MftRecordFragment {
                 record_id: 13,
+                is_extension: false,
                 parent_id: 12,
                 size: 9999,
+                has_data_attr: true,
                 modified_timestamp: 12345,
-                name: "app.apk".into(),
+                name: Some("app.apk".into()),
+                chosen_namespace: 1,
                 is_dir: false,
             },
-            MftNode {
+            MftRecordFragment {
                 record_id: 14,
+                is_extension: false,
                 parent_id: 5,
                 size: 100,
+                has_data_attr: true,
                 modified_timestamp: 12345,
-                name: "README.md".into(),
+                name: Some("README.md".into()),
+                chosen_namespace: 1,
                 is_dir: false,
             },
         ];
 
-        let index = MftVolumeIndex::new('C', None, nodes);
+        let index = MftVolumeIndex::new('C', None, frags);
         let policy = ScanPolicy::new(true); // prune_ignored = true
         let observer = ScanObserver::new(Arc::new(AtomicBool::new(false)));
 

@@ -59,7 +59,20 @@ impl ScanEngine for NtfsMftEngine {
 
         // Attempt MFT retrieval / parsing from store
         match self.store.get_or_build(drive_letter, observer) {
-            Ok(volume_index) => volume_index.extract_subtree(target_frn, policy, observer),
+            Ok(volume_index) => {
+                let snapshot = volume_index.extract_subtree(target_frn, policy, observer)?;
+                // Safety check: if target directory has files on disk but MFT subtree extraction returned empty,
+                // fallback to Win32 LargeFetch to guarantee accurate results.
+                if snapshot.is_empty() && !is_root {
+                    if let Ok(mut entries) = std::fs::read_dir(root) {
+                        if entries.next().is_some() {
+                            let fallback = Win32LargeFetchEngine::new(self.is_hdd);
+                            return fallback.scan(root, policy, observer);
+                        }
+                    }
+                }
+                Ok(snapshot)
+            }
             Err(e) => {
                 if matches!(e, AppError::ScanCancelled) {
                     return Err(e);
